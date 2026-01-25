@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { FileEntry } from '../../types/file';
 import { formatBytes } from '../../utils/formatters';
 import EmptyState from '../shared/EmptyState';
@@ -31,6 +32,58 @@ function FileList({
   onCompress,
   onDecompress,
 }: Props) {
+  const [contextMenuEntry, setContextMenuEntry] = useState<FileEntry | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!contextMenuPosition) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setContextMenuPosition(null);
+        setContextMenuEntry(null);
+      }
+    };
+    const handleScroll = () => {
+      setContextMenuPosition(null);
+      setContextMenuEntry(null);
+    };
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-file-context-menu="true"]')) {
+        return;
+      }
+      setContextMenuPosition(null);
+      setContextMenuEntry(null);
+    };
+    const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-file-context-menu="true"]')) {
+        return;
+      }
+      setContextMenuPosition(null);
+      setContextMenuEntry(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('mousedown', handlePointerDown, true);
+    window.addEventListener('touchstart', handlePointerDown, true);
+    window.addEventListener('contextmenu', handleContextMenu, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('mousedown', handlePointerDown, true);
+      window.removeEventListener('touchstart', handlePointerDown, true);
+      window.removeEventListener('contextmenu', handleContextMenu, true);
+    };
+  }, [contextMenuPosition]);
+
+  const closeContextMenu = () => {
+    setContextMenuPosition(null);
+    setContextMenuEntry(null);
+  };
+
   if (isLoading) {
     return (
       <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-6 text-sm text-slate-200">
@@ -69,6 +122,11 @@ function FileList({
               className={`grid grid-cols-[24px,1fr,120px,160px,36px] items-center gap-3 px-4 py-2 text-sm ${
                 selected ? 'bg-slate-900/70' : 'hover:bg-slate-900/50'
               }`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setContextMenuEntry(entry);
+                setContextMenuPosition({ x: event.clientX, y: event.clientY });
+              }}
             >
               <input
                 type="checkbox"
@@ -113,6 +171,24 @@ function FileList({
           );
         })}
       </div>
+      {contextMenuEntry && contextMenuPosition ? (
+        <FileContextMenu
+          entry={contextMenuEntry}
+          onOpen={() => onOpen(contextMenuEntry)}
+          onDownload={
+            !contextMenuEntry.isDirectory ? () => onDownload(contextMenuEntry) : undefined
+          }
+          onCompress={() => onCompress(contextMenuEntry)}
+          onDecompress={
+            !contextMenuEntry.isDirectory && isArchive(contextMenuEntry.name)
+              ? () => onDecompress(contextMenuEntry)
+              : undefined
+          }
+          onDelete={() => onDelete(contextMenuEntry)}
+          contextPosition={contextMenuPosition}
+          onRequestClose={closeContextMenu}
+        />
+      ) : null}
     </div>
   );
 }

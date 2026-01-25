@@ -4,6 +4,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyHelmet from "@fastify/helmet";
+import fastifyMultipart from "@fastify/multipart";
 import pino from "pino";
 import { PrismaClient } from "@prisma/client";
 import "./types"; // Load type augmentations
@@ -98,6 +99,12 @@ async function bootstrap() {
         return (request as any).user?.userId || request.ip;
       },
       skipOnError: false,
+    });
+
+    await app.register(fastifyMultipart, {
+      limits: {
+        fileSize: 104857600,
+      },
     });
 
     // Register plugins

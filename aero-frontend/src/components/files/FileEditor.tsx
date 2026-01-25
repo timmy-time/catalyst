@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import Editor from '@monaco-editor/react';
-import EmptyState from '../shared/EmptyState';
 
 type FileDraft = {
   path: string;
@@ -16,8 +15,10 @@ type Props = {
   isDirty: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
+  onDownload?: () => void;
   onReset: () => void;
   onClose: () => void;
+  height?: string;
 };
 
 const resolveLanguage = (fileName: string) => {
@@ -44,20 +45,26 @@ const resolveLanguage = (fileName: string) => {
   }
 };
 
-function FileEditor({ file, isLoading, isSaving, isDirty, onChange, onSave, onReset, onClose }: Props) {
+function FileEditor({
+  file,
+  isLoading,
+  isSaving,
+  isDirty,
+  onChange,
+  onSave,
+  onDownload,
+  onReset,
+  onClose,
+  height = '360px',
+}: Props) {
   const language = useMemo(() => (file ? resolveLanguage(file.name) : 'plaintext'), [file]);
 
   if (!file) {
-    return (
-      <EmptyState
-        title="Select a file to edit"
-        description="Choose a file from the list to view or edit its contents."
-      />
-    );
+    return null;
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-100">{file.name}</div>
@@ -73,6 +80,16 @@ function FileEditor({ file, isLoading, isSaving, isDirty, onChange, onSave, onRe
           >
             Revert
           </button>
+          {onDownload ? (
+            <button
+              type="button"
+              className="rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-300 hover:border-slate-700 disabled:opacity-60"
+              onClick={onDownload}
+              disabled={isSaving || isLoading}
+            >
+              Download
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded-md bg-sky-600 px-3 py-1 text-xs font-semibold text-white shadow hover:bg-sky-500 disabled:opacity-60"
@@ -90,12 +107,15 @@ function FileEditor({ file, isLoading, isSaving, isDirty, onChange, onSave, onRe
           </button>
         </div>
       </div>
-      <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+      <div
+        className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-950"
+        style={{ height }}
+      >
         {isLoading ? (
           <div className="px-4 py-6 text-sm text-slate-400">Loading file contents...</div>
         ) : (
           <Editor
-            height="360px"
+            height="100%"
             theme="vs-dark"
             language={language}
             value={file.content}

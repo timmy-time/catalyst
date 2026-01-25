@@ -237,7 +237,8 @@ function FileManager({ serverId }: { serverId: string }) {
       notifyError('Select files and provide an archive name');
       return;
     }
-    compressMutation.mutate({ paths: selected, archive: name });
+    const archivePath = name.startsWith('/') ? normalizePath(name) : joinPath(path, name);
+    compressMutation.mutate({ paths: selected, archive: archivePath });
   };
 
   const handleDecompress = () => {
@@ -568,23 +569,33 @@ function FileManager({ serverId }: { serverId: string }) {
             onDecompress={handleBulkDecompressFromEntry}
           />
         </div>
-
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4">
-          <FileEditor
-            file={activeFile}
-            isLoading={isFileLoading}
-            isSaving={saveMutation.isPending}
-            isDirty={isDirty}
-            onChange={updateActiveContent}
-            onSave={() => saveMutation.mutate()}
-            onReset={() => {
-              if (!activeFile) return;
-              updateActiveContent(activeFile.originalContent);
-            }}
-            onClose={closeActiveFile}
-          />
-        </div>
       </div>
+
+      {activeFile ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <div
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+            onClick={closeActiveFile}
+          />
+          <div className="relative z-10 h-[90vh] w-[90vw] rounded-xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl">
+            <FileEditor
+              file={activeFile}
+              isLoading={isFileLoading}
+              isSaving={saveMutation.isPending}
+              isDirty={isDirty}
+              onChange={updateActiveContent}
+              onSave={() => saveMutation.mutate()}
+              onDownload={() => handleDownload(activeFile)}
+              onReset={() => {
+                if (!activeFile) return;
+                updateActiveContent(activeFile.originalContent);
+              }}
+              onClose={closeActiveFile}
+              height="calc(90vh - 140px)"
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

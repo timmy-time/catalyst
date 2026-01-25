@@ -1,0 +1,72 @@
+{
+  "id": "nodejs-generic",
+  "name": "Node.js App (Generic)",
+  "description": "Generic Node.js template for websites, bots, or services",
+  "author": "Aero Maintainers",
+  "version": "20.x",
+  "image": "node:20-alpine",
+  "startup": "{{START_COMMAND}}",
+  "stopCommand": "npm run stop || kill -s SIGTERM 1",
+  "sendSignalTo": "SIGTERM",
+  "variables": [
+    {
+      "name": "GIT_REPO",
+      "description": "Git clone URL for the repository",
+      "default": "https://github.com/your-org/your-repo.git",
+      "required": true,
+      "input": "text"
+    },
+    {
+      "name": "GIT_BRANCH",
+      "description": "Git branch or tag to deploy",
+      "default": "main",
+      "required": false,
+      "input": "text"
+    },
+    {
+      "name": "INSTALL_COMMAND",
+      "description": "Command to install dependencies",
+      "default": "npm install",
+      "required": true,
+      "input": "text"
+    },
+    {
+      "name": "BUILD_COMMAND",
+      "description": "Optional build command (leave blank to skip)",
+      "default": "",
+      "required": false,
+      "input": "text"
+    },
+    {
+      "name": "START_COMMAND",
+      "description": "Command to start the application",
+      "default": "npm run start",
+      "required": true,
+      "input": "text"
+    },
+    {
+      "name": "PORT",
+      "description": "Port the application listens on",
+      "default": "3000",
+      "required": true,
+      "input": "number",
+      "rules": ["between:1,65535"]
+    },
+    {
+      "name": "NODE_ENV",
+      "description": "Node environment",
+      "default": "production",
+      "required": false,
+      "input": "select",
+      "rules": ["in:development,production,test"]
+    }
+  ],
+  "installScript": "#!/bin/sh\nset -e\n\necho '[Aero] Starting Node.js app installation...'\n\nmkdir -p {{SERVER_DIR}}\ncd {{SERVER_DIR}}\n\nif [ -z \"{{GIT_REPO}}\" ]; then\n  echo '[Aero] ERROR: GIT_REPO is required'\n  exit 1\nfi\n\nif command -v git >/dev/null 2>&1; then\n  if [ -d app ]; then\n    echo '[Aero] Updating existing repo...'\n    cd app\n    git fetch --all --prune\n    git checkout {{GIT_BRANCH}}\n    git reset --hard origin/{{GIT_BRANCH}}\n  else\n    echo '[Aero] Cloning repository...'\n    git clone --depth 1 --branch {{GIT_BRANCH}} {{GIT_REPO}} app\n    cd app\n  fi\nelse\n  echo '[Aero] ERROR: git is required but not installed in the image'\n  exit 1\nfi\n\n# Create .env file with repo link and runtime config\ncat > .env << 'ENVVARS'\nGIT_REPO={{GIT_REPO}}\nNODE_ENV={{NODE_ENV}}\nPORT={{PORT}}\nENVVARS\n\n# Install dependencies\nif [ -n \"{{INSTALL_COMMAND}}\" ]; then\n  echo '[Aero] Installing dependencies...'\n  sh -c \"{{INSTALL_COMMAND}}\"\nfi\n\n# Build step (optional)\nif [ -n \"{{BUILD_COMMAND}}\" ]; then\n  echo '[Aero] Building application...'\n  sh -c \"{{BUILD_COMMAND}}\"\nfi\n\necho '[Aero] Installation complete!'\n",
+  "supportedPorts": [3000],
+  "allocatedMemoryMb": 512,
+  "allocatedCpuCores": 1,
+  "features": {
+    "restartOnExit": true,
+    "maxInstances": 50
+  }
+}

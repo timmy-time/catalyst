@@ -3,9 +3,45 @@ import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
 import { ServerStateMachine } from "../services/state-machine";
 import { ServerState } from "../shared-types";
+import { createWriteStream } from "fs";
+import { promises as fs } from "fs";
+import path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { pipeline } from "stream/promises";
 
 export async function serverRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
+  const execFileAsync = promisify(execFile);
+  const serverDataRoot = process.env.SERVER_DATA_PATH || "/tmp/aero-servers";
+
+  const normalizeRequestPath = (value?: string) => {
+    if (!value) return "/";
+    const cleaned = value.replace(/\\/g, "/").trim();
+    if (!cleaned || cleaned === ".") return "/";
+    const parts = cleaned.split("/").filter(Boolean);
+    return `/${parts.join("/")}`;
+  };
+
+  const resolveServerPath = async (serverUuid: string, requestedPath: string) => {
+    const baseDir = path.resolve(serverDataRoot, serverUuid);
+    await fs.mkdir(baseDir, { recursive: true });
+    const safePath = path.resolve(baseDir, requestedPath.replace(/\\/g, "/").replace(/^\/+/, ""));
+    const basePrefix = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+    if (safePath !== baseDir && !safePath.startsWith(basePrefix)) {
+      throw new Error("Path traversal attempt detected");
+    }
+    return { baseDir, targetPath: safePath };
+  };
+
+  const isArchiveName = (value: string) => {
+    const lowered = value.toLowerCase();
+    return (
+      lowered.endsWith(".tar.gz") ||
+      lowered.endsWith(".tgz") ||
+      lowered.endsWith(".zip")
+    );
+  };
 
   // Create server
   app.post(
@@ -353,7 +389,7 @@ export async function serverRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { serverId } = request.params as { serverId: string };
       const userId = request.user.userId;
-      const { path } = request.query as { path?: string };
+      const { path: requestedPath } = request.query as { path?: string };
 
       const server = await prisma.server.findUnique({
         where: { id: serverId },
@@ -376,29 +412,332 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Forbidden" });
       }
 
-      // For now, return mock data since this requires agent integration
-      // In production, this would communicate with the agent to get real file listings
-      reply.send({
-        success: true,
-        data: {
-          path: path || "/",
-          files: [
-            {
-              name: "server.properties",
-              type: "file",
-              size: 1024,
-              modified: new Date(),
-            },
-            {
-              name: "logs",
-              type: "directory",
-              size: 0,
-              modified: new Date(),
-            },
-          ],
-          message: "File listing requires agent integration",
+      const normalizedPath = normalizeRequestPath(requestedPath);
+
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        const stats = await fs.stat(targetPath).catch(() => null);
+        if (!stats) {
+          return reply.status(404).send({ error: "Path not found" });
+        }
+        if (!stats.isDirectory()) {
+          return reply.status(400).send({ error: "Path is not a directory" });
+        }
+
+        const entries = await fs.readdir(targetPath, { withFileTypes: true });
+        const files = await Promise.all(
+          entries.map(async (entry) => {
+            const entryPath = path.join(targetPath, entry.name);
+            const entryStats = await fs.stat(entryPath);
+            const isDirectory = entry.isDirectory();
+            return {
+              name: entry.name,
+              size: isDirectory ? 0 : entryStats.size,
+              isDirectory,
+              modified: entryStats.mtime.toISOString(),
+              type: isDirectory ? "directory" : "file",
+            };
+          })
+        );
+
+        reply.send({
+          success: true,
+          data: {
+            path: normalizedPath,
+            files,
+          },
+        });
+      } catch (error) {
+        reply.status(400).send({ error: "Invalid path" });
+      }
+    }
+  );
+
+  // Download server file
+  app.get(
+    "/:serverId/files/download",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+      const { path: requestedPath } = request.query as { path?: string };
+
+      if (!requestedPath) {
+        return reply.status(400).send({ error: "Missing path parameter" });
+      }
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.read" },
         },
       });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      const normalizedPath = normalizeRequestPath(requestedPath);
+
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        const stats = await fs.stat(targetPath).catch(() => null);
+        if (!stats) {
+          return reply.status(404).send({ error: "File not found" });
+        }
+        if (!stats.isFile()) {
+          return reply.status(400).send({ error: "Path is not a file" });
+        }
+
+        const data = await fs.readFile(targetPath);
+        reply.type("application/octet-stream");
+        reply.send(data);
+      } catch (error) {
+        reply.status(400).send({ error: "Invalid path" });
+      }
+    }
+  );
+
+  // Upload server file
+  app.post(
+    "/:serverId/files/upload",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.write" },
+        },
+      });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      const upload = await request.file();
+      if (!upload) {
+        return reply.status(400).send({ error: "Missing file upload" });
+      }
+
+      const fields = upload.fields as Record<string, { value?: unknown }> | undefined;
+      const rawPath = fields?.path?.value;
+      const basePath =
+        typeof rawPath === "string" ? rawPath : rawPath ? String(rawPath) : "/";
+      const normalizedPath = normalizeRequestPath(basePath);
+      const filePath = path.posix.join(normalizedPath, upload.filename);
+
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, filePath);
+        await fs.mkdir(path.dirname(targetPath), { recursive: true });
+        await pipeline(upload.file, createWriteStream(targetPath));
+        reply.send({ success: true });
+      } catch (error) {
+        reply.status(400).send({ error: "Failed to upload file" });
+      }
+    }
+  );
+
+  // Create file or directory
+  app.post(
+    "/:serverId/files/create",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+      const { path: requestedPath, isDirectory, content } = request.body as {
+        path: string;
+        isDirectory: boolean;
+        content?: string;
+      };
+
+      if (!requestedPath) {
+        return reply.status(400).send({ error: "Missing path" });
+      }
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.write" },
+        },
+      });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      const normalizedPath = normalizeRequestPath(requestedPath);
+
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        if (normalizedPath === "/") {
+          return reply.status(400).send({ error: "Invalid path" });
+        }
+        if (isDirectory) {
+          await fs.mkdir(targetPath, { recursive: true });
+        } else {
+          await fs.mkdir(path.dirname(targetPath), { recursive: true });
+          await fs.writeFile(targetPath, content ?? "");
+        }
+        reply.send({ success: true });
+      } catch (error) {
+        reply.status(400).send({ error: "Failed to create item" });
+      }
+    }
+  );
+
+  // Compress files
+  app.post(
+    "/:serverId/files/compress",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+      const { paths, archiveName } = request.body as { paths: string[]; archiveName: string };
+
+      if (!paths?.length || !archiveName) {
+        return reply.status(400).send({ error: "Missing paths or archive name" });
+      }
+
+      if (!isArchiveName(archiveName)) {
+        return reply.status(400).send({ error: "Unsupported archive type" });
+      }
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.write" },
+        },
+      });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      try {
+        const normalizedArchive = normalizeRequestPath(archiveName);
+        const archiveLower = normalizedArchive.toLowerCase();
+        const { baseDir, targetPath } = await resolveServerPath(server.uuid, normalizedArchive);
+        const archiveDir = path.dirname(targetPath);
+        await fs.mkdir(archiveDir, { recursive: true });
+
+        const relativePaths = await Promise.all(
+          paths.map(async (filePath) => {
+            const normalizedPath = normalizeRequestPath(filePath);
+            const resolved = await resolveServerPath(server.uuid, normalizedPath);
+            const relative = path.relative(baseDir, resolved.targetPath);
+            if (!relative || relative.startsWith("..")) {
+              throw new Error("Invalid file path");
+            }
+            return relative;
+          })
+        );
+
+        if (archiveLower.endsWith(".zip")) {
+          await execFileAsync("zip", ["-r", targetPath, ...relativePaths], { cwd: baseDir });
+        } else {
+          await execFileAsync("tar", ["-czf", targetPath, "-C", baseDir, ...relativePaths]);
+        }
+
+        reply.send({ success: true, data: { archivePath: normalizedArchive } });
+      } catch (error) {
+        reply.status(500).send({ error: "Failed to compress files" });
+      }
+    }
+  );
+
+  // Decompress archive
+  app.post(
+    "/:serverId/files/decompress",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+      const { archivePath, targetPath } = request.body as {
+        archivePath: string;
+        targetPath: string;
+      };
+
+      if (!archivePath || !targetPath) {
+        return reply.status(400).send({ error: "Missing archive or target path" });
+      }
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.write" },
+        },
+      });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      try {
+        const normalizedArchive = normalizeRequestPath(archivePath);
+        const archiveLower = normalizedArchive.toLowerCase();
+        const normalizedTarget = normalizeRequestPath(targetPath);
+        const { targetPath: archiveFullPath } = await resolveServerPath(server.uuid, normalizedArchive);
+        const { targetPath: targetFullPath } = await resolveServerPath(server.uuid, normalizedTarget);
+        await fs.mkdir(targetFullPath, { recursive: true });
+
+        if (archiveLower.endsWith(".zip")) {
+          await execFileAsync("unzip", ["-o", archiveFullPath, "-d", targetFullPath]);
+        } else {
+          await execFileAsync("tar", ["-xzf", archiveFullPath, "-C", targetFullPath]);
+        }
+
+        reply.send({ success: true });
+      } catch (error) {
+        reply.status(500).send({ error: "Failed to decompress archive" });
+      }
     }
   );
 
@@ -470,15 +809,14 @@ export async function serverRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { serverId } = request.params as { serverId: string };
       const userId = request.user.userId;
-      const { path, content } = request.body as { path: string; content: string };
+      const { path: filePath, content } = request.body as { path: string; content: string };
 
-      if (!path || content === undefined) {
+      if (!filePath || content === undefined) {
         return reply.status(400).send({ error: "Missing path or content" });
       }
 
       const server = await prisma.server.findUnique({
         where: { id: serverId },
-        include: { node: true },
       });
 
       if (!server) {
@@ -498,26 +836,17 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Forbidden" });
       }
 
-      if (!server.node.isOnline) {
-        return reply.status(503).send({ error: "Node is offline" });
+      const normalizedPath = normalizeRequestPath(filePath);
+      if (normalizedPath === "/") {
+        return reply.status(400).send({ error: "Invalid path" });
       }
 
-      const gateway = (app as any).wsGateway;
-      if (!gateway) {
-        return reply.status(500).send({ error: "WebSocket gateway not available" });
-      }
-
-      const success = await gateway.sendToAgent(server.nodeId, {
-        type: "file_operation",
-        operation: "write",
-        serverId: server.id,
-        serverUuid: server.uuid,
-        path,
-        data: content,
-      });
-
-      if (!success) {
-        return reply.status(503).send({ error: "Failed to send command to agent" });
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        await fs.mkdir(path.dirname(targetPath), { recursive: true });
+        await fs.writeFile(targetPath, content);
+      } catch (error) {
+        return reply.status(400).send({ error: "Failed to write file" });
       }
 
       // Log action
@@ -527,11 +856,11 @@ export async function serverRoutes(app: FastifyInstance) {
           action: "file.write",
           resource: "server",
           resourceId: serverId,
-          details: { path },
+          details: { path: normalizedPath },
         },
       });
 
-      reply.send({ success: true, message: "File write command sent to agent" });
+      reply.send({ success: true, message: "File saved" });
     }
   );
 
@@ -542,15 +871,14 @@ export async function serverRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { serverId } = request.params as { serverId: string };
       const userId = request.user.userId;
-      const { path } = request.query as { path: string };
+      const { path: requestedPath } = request.query as { path: string };
 
-      if (!path) {
+      if (!requestedPath) {
         return reply.status(400).send({ error: "Missing path parameter" });
       }
 
       const server = await prisma.server.findUnique({
         where: { id: serverId },
-        include: { node: true },
       });
 
       if (!server) {
@@ -570,25 +898,16 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Forbidden" });
       }
 
-      if (!server.node.isOnline) {
-        return reply.status(503).send({ error: "Node is offline" });
+      const normalizedPath = normalizeRequestPath(requestedPath);
+      if (normalizedPath === "/") {
+        return reply.status(400).send({ error: "Invalid path" });
       }
 
-      const gateway = (app as any).wsGateway;
-      if (!gateway) {
-        return reply.status(500).send({ error: "WebSocket gateway not available" });
-      }
-
-      const success = await gateway.sendToAgent(server.nodeId, {
-        type: "file_operation",
-        operation: "delete",
-        serverId: server.id,
-        serverUuid: server.uuid,
-        path,
-      });
-
-      if (!success) {
-        return reply.status(503).send({ error: "Failed to send command to agent" });
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        await fs.rm(targetPath, { recursive: true, force: true });
+      } catch (error) {
+        return reply.status(400).send({ error: "Failed to delete selection" });
       }
 
       // Log action
@@ -598,11 +917,11 @@ export async function serverRoutes(app: FastifyInstance) {
           action: "file.delete",
           resource: "server",
           resourceId: serverId,
-          details: { path },
+          details: { path: normalizedPath },
         },
       });
 
-      reply.send({ success: true, message: "File delete command sent to agent" });
+      reply.send({ success: true, message: "File deleted" });
     }
   );
 
