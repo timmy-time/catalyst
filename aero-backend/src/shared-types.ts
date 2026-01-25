@@ -134,6 +134,7 @@ export namespace WsEvent {
 
   export interface ConsoleInput {
     serverId: string;
+    serverUuid?: string;
     data: string;
   }
 

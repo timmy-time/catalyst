@@ -5,6 +5,7 @@ import type {
   UpdateServerPayload,
   TransferServerPayload,
   CreateServerPayload,
+  ServerLogs,
 } from '../../types/server';
 
 type ApiResponse<T> = {
@@ -59,5 +60,12 @@ export const serversApi = {
   install: async (id: string) => {
     const { data } = await apiClient.post<ApiResponse<void>>(`/api/servers/${id}/install`);
     return data;
+  },
+  logs: async (id: string, params?: { lines?: number; stream?: string }) => {
+    const { data } = await apiClient.get<ApiResponse<ServerLogs>>(
+      `/api/servers/${id}/logs`,
+      { params },
+    );
+    return data.data?.logs || [];
   },
 };

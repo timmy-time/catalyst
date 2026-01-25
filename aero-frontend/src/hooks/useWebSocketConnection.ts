@@ -4,12 +4,12 @@ import { useAuthStore } from '../stores/authStore';
 
 export function useWebSocketConnection() {
   const { connect } = useWebSocketStore();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, isReady, token } = useAuthStore();
 
   useEffect(() => {
     // Only connect if authenticated
-    if (isAuthenticated) {
+    if (isReady && isAuthenticated && token) {
       connect();
     }
-  }, [isAuthenticated, connect]);
+  }, [isReady, isAuthenticated, token, connect]);
 }

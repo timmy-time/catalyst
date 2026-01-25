@@ -1,6 +1,7 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useServer } from '../../hooks/useServer';
 import { useServerMetrics } from '../../hooks/useServerMetrics';
+import { useServerEvents } from '../../hooks/useServerEvents';
 import { useWebSocketStore } from '../../stores/websocketStore';
 import ServerControls from '../../components/servers/ServerControls';
 import ServerStatusBadge from '../../components/servers/ServerStatusBadge';
@@ -12,7 +13,8 @@ import DeleteServerDialog from '../../components/servers/DeleteServerDialog';
 function ServerDetailsPage() {
   const { serverId } = useParams();
   const { data: server, isLoading, isError } = useServer(serverId);
-  const liveMetrics = useServerMetrics(serverId);
+  const liveMetrics = useServerMetrics(serverId, server?.allocatedMemoryMb);
+  const events = useServerEvents(serverId);
   const { isConnected } = useWebSocketStore();
 
   if (isLoading) {
@@ -42,6 +44,18 @@ function ServerDetailsPage() {
           <div className="text-sm text-slate-400">Node: {server.nodeName ?? server.nodeId}</div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
+          <Link
+            to={`/servers/${server.id}/console`}
+            className="rounded-md border border-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:border-slate-700"
+          >
+            Console
+          </Link>
+          <Link
+            to={`/servers/${server.id}/files`}
+            className="rounded-md border border-slate-800 px-3 py-1 text-xs font-semibold text-slate-200 hover:border-slate-700"
+          >
+            Files
+          </Link>
           <UpdateServerModal serverId={server.id} />
           <TransferServerModal serverId={server.id} />
           <DeleteServerDialog serverId={server.id} serverName={server.name} />
@@ -59,9 +73,9 @@ function ServerDetailsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ServerMetrics 
-          cpu={liveMetrics?.cpu ?? server?.cpuPercent ?? 42} 
-          memory={liveMetrics?.memory ?? server?.memoryPercent ?? 68} 
+        <ServerMetrics
+          cpu={liveMetrics?.cpuPercent ?? server?.cpuPercent ?? 0}
+          memory={liveMetrics?.memoryPercent ?? server?.memoryPercent ?? 0}
         />
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4 lg:col-span-2">
           <div className="mb-2 flex items-center justify-between">
@@ -72,12 +86,28 @@ function ServerDetailsPage() {
             </div>
           </div>
           <ul className="space-y-2 text-sm text-slate-300">
-            <li className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
-              {isConnected ? 'Connected to WebSocket - ready for real-time updates.' : 'Connecting to real-time updates...'}
-            </li>
-            <li className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
-              {liveMetrics ? 'Receiving live metrics updates.' : 'Waiting for metrics stream...'}
-            </li>
+            {events.length > 0 ? (
+              events.map((event) => (
+                <li key={event.id} className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                    <span className="uppercase tracking-wide">{event.stream ?? 'event'}</span>
+                    <span>{new Date(event.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-100">{event.message}</div>
+                </li>
+              ))
+            ) : (
+              <>
+                <li className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
+                  {isConnected
+                    ? 'Connected to WebSocket - ready for real-time updates.'
+                    : 'Connecting to real-time updates...'}
+                </li>
+                <li className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2">
+                  {liveMetrics ? 'Receiving live metrics updates.' : 'Waiting for metrics stream...'}
+                </li>
+              </>
+            )}
           </ul>
         </div>
       </div>

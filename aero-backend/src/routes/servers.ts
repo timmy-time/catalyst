@@ -32,7 +32,7 @@ export async function serverRoutes(app: FastifyInstance) {
         allocatedMemoryMb: number;
         allocatedCpuCores: number;
         primaryPort: number;
-        networkMode: string;
+        networkMode?: string;
         environment: Record<string, string>;
       };
 
@@ -159,7 +159,7 @@ export async function serverRoutes(app: FastifyInstance) {
           allocatedMemoryMb,
           allocatedCpuCores,
           primaryPort,
-          networkMode,
+          networkMode: networkMode || "mc-lan",
           environment,
         },
       });

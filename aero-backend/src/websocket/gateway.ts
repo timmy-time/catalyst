@@ -8,6 +8,7 @@ import {
   ErrorCodes,
 } from "../shared-types";
 import { ServerStateMachine } from "../services/state-machine";
+import { config } from "../config";
 
 interface ConnectedAgent {
   nodeId: string;
@@ -94,8 +95,8 @@ export class WebSocketGateway {
         })
       );
 
-      socket.on("message", (data: any) => this.handleAgentMessage(node.id, data));
-      socket.on("close", () => {
+      socket.socket.on("message", (data: any) => this.handleAgentMessage(node.id, data));
+      socket.socket.on("close", () => {
         this.agents.delete(node.id);
         this.prisma.node.update({
           where: { id: node.id },
@@ -128,8 +129,8 @@ export class WebSocketGateway {
       this.clients.set(clientId, client);
       this.logger.info(`Client connected: ${clientId}`);
 
-      socket.on("message", (data: any) => this.handleClientMessage(clientId, data));
-      socket.on("close", () => {
+      socket.socket.on("message", (data: any) => this.handleClientMessage(clientId, data));
+      socket.socket.on("close", () => {
         this.clients.delete(clientId);
         this.logger.info(`Client disconnected: ${clientId}`);
       });
@@ -173,8 +174,10 @@ export class WebSocketGateway {
         await this.routeToClients(message.serverId, message);
       } else if (message.type === "server_state_update") {
         // Update server status in database with validation
-        const server = await this.prisma.server.findUnique({
-          where: { id: message.serverId },
+        const server = await this.prisma.server.findFirst({
+          where: {
+            OR: [{ id: message.serverId }, { uuid: message.serverId }],
+          },
         });
 
         if (server) {
@@ -208,14 +211,14 @@ export class WebSocketGateway {
           }
 
           await this.prisma.server.update({
-            where: { id: message.serverId },
+            where: { id: server.id },
             data: updateData,
           });
 
           // Log state change
           await this.prisma.serverLog.create({
             data: {
-              serverId: message.serverId,
+              serverId: server.id,
               stream: "system",
               data: `Server state changed: ${currentState} → ${newState}${message.reason ? ` (${message.reason})` : ""}${isCrash ? ` [Crash ${updateData.crashCount}/${server.maxCrashCount}]` : ""}`,
             },
@@ -228,26 +231,49 @@ export class WebSocketGateway {
         }
 
         // Route to clients
-        await this.routeToClients(message.serverId, message);
+        if (server) {
+          await this.routeToClients(server.id, { ...message, serverId: server.id });
+        } else {
+          await this.routeToClients(message.serverId, message);
+        }
       } else if (message.type === "resource_stats") {
         // Store resource metrics for server
+        let normalizedServerId: string | null = null;
         if (message.serverId) {
-          await this.prisma.serverMetrics.create({
-            data: {
-              serverId: message.serverId,
-              cpuPercent: message.cpuPercent || 0,
-              memoryUsageMb: message.memoryUsageMb || 0,
-              networkRxBytes: BigInt(message.networkRxBytes || 0),
-              networkTxBytes: BigInt(message.networkTxBytes || 0),
-              diskUsageMb: message.diskUsageMb || 0,
+          const serverExists = await this.prisma.server.findFirst({
+            where: {
+              OR: [{ id: message.serverId }, { uuid: message.serverId }],
             },
-          }).catch(err => {
-            this.logger.error(err, `Failed to store metrics for server ${message.serverId}`);
+            select: { id: true },
           });
+
+          if (!serverExists) {
+            this.logger.warn(`Skipping metrics for unknown server ${message.serverId}`);
+          } else {
+            normalizedServerId = serverExists.id;
+            await this.prisma.serverMetrics.create({
+              data: {
+                serverId: serverExists.id,
+                cpuPercent: message.cpuPercent || 0,
+                memoryUsageMb: message.memoryUsageMb || 0,
+                networkRxBytes: BigInt(message.networkRxBytes || 0),
+                networkTxBytes: BigInt(message.networkTxBytes || 0),
+                diskUsageMb: message.diskUsageMb || 0,
+              },
+            }).catch(err => {
+              this.logger.error(err, `Failed to store metrics for server ${message.serverId}`);
+            });
+          }
         }
 
         // Route to clients for real-time display
-        await this.routeToClients(message.serverId, message);
+        if (message.serverId) {
+          if (normalizedServerId) {
+            await this.routeToClients(normalizedServerId, { ...message, serverId: normalizedServerId });
+          } else {
+            await this.routeToClients(message.serverId, message);
+          }
+        }
       } else if (message.type === "health_report") {
         // Store node-level health metrics
         await this.prisma.nodeMetrics.create({
@@ -367,7 +393,12 @@ export class WebSocketGateway {
         // Route to agent
         const agent = this.agents.get(server.nodeId);
         if (agent && agent.socket.socket.readyState === 1) {
-          agent.socket.socket.send(JSON.stringify(event));
+          agent.socket.socket.send(
+            JSON.stringify({
+              ...event,
+              serverUuid: server.uuid,
+            })
+          );
         }
       }
     } catch (err) {
@@ -376,8 +407,10 @@ export class WebSocketGateway {
   }
 
   private async routeToClients(serverId: string, message: any) {
-    const server = await this.prisma.server.findUnique({
-      where: { id: serverId },
+    const server = await this.prisma.server.findFirst({
+      where: {
+        OR: [{ id: serverId }, { uuid: serverId }],
+      },
       include: {
         access: {
           select: { userId: true },
@@ -407,8 +440,8 @@ export class WebSocketGateway {
     token: string
   ): Promise<{ userId: string } | null> {
     try {
-      const jwt = await import("jsonwebtoken");
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "dev-secret-key");
+      const { default: jwt } = await import("jsonwebtoken");
+      const decoded = jwt.verify(token, config.jwt.secret);
       return decoded as { userId: string };
     } catch {
       return null;

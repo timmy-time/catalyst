@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useWebSocketStore } from '../stores/websocketStore';
 import type { ServerMetrics as ServerMetricsType } from '../types/server';
 
-export function useServerMetrics(serverId?: string) {
+const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
+
+export function useServerMetrics(serverId?: string, allocatedMemoryMb?: number) {
   const [metrics, setMetrics] = useState<ServerMetricsType | null>(null);
   const { isConnected, subscribe, unsubscribe, onMessage } = useWebSocketStore();
+  const memoryBudget = useMemo(() => (allocatedMemoryMb && allocatedMemoryMb > 0 ? allocatedMemoryMb : 0), [
+    allocatedMemoryMb,
+  ]);
 
   useEffect(() => {
     if (!serverId || !isConnected) return;
@@ -15,10 +20,22 @@ export function useServerMetrics(serverId?: string) {
     // Register handler for this server's metrics
     const unsubscribeHandler = onMessage((message) => {
       if (message.type === 'resource_stats' && message.serverId === serverId) {
+        const cpuPercent = clampPercent(message.cpuPercent ?? message.cpu ?? 0);
+        const memoryUsageMb = message.memoryUsageMb ?? 0;
+        const memoryPercent =
+          typeof message.memory === 'number'
+            ? clampPercent(message.memory)
+            : memoryBudget
+              ? clampPercent((memoryUsageMb / memoryBudget) * 100)
+              : 0;
+
         setMetrics({
-          cpu: message.cpu || 0,
-          memory: message.memory || 0,
-          network: 0,
+          cpuPercent,
+          memoryPercent,
+          memoryUsageMb,
+          networkRxBytes: message.networkRxBytes,
+          networkTxBytes: message.networkTxBytes,
+          diskUsageMb: message.diskUsageMb,
           timestamp: new Date().toISOString(),
         });
       }
@@ -28,7 +45,7 @@ export function useServerMetrics(serverId?: string) {
       unsubscribeHandler();
       unsubscribe(serverId);
     };
-  }, [serverId, isConnected, subscribe, unsubscribe, onMessage]);
+  }, [serverId, isConnected, subscribe, unsubscribe, onMessage, memoryBudget]);
 
   return metrics;
 }

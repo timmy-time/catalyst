@@ -16,6 +16,8 @@ export interface Server {
   nodeName?: string;
   cpuPercent?: number;
   memoryPercent?: number;
+  allocatedMemoryMb?: number;
+  allocatedCpuCores?: number;
 }
 
 export interface ServerListParams {
@@ -44,4 +46,26 @@ export interface UpdateServerPayload {
 
 export interface TransferServerPayload {
   targetNodeId: string;
+}
+
+export interface ServerMetrics {
+  cpuPercent: number;
+  memoryPercent: number;
+  memoryUsageMb?: number;
+  networkRxBytes?: number;
+  networkTxBytes?: number;
+  diskUsageMb?: number;
+  timestamp: string;
+}
+
+export interface ServerLogEntry {
+  stream: string;
+  data: string;
+  timestamp: string;
+}
+
+export interface ServerLogs {
+  logs: ServerLogEntry[];
+  count: number;
+  requestedLines: number;
 }

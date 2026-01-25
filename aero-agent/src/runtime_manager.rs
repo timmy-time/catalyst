@@ -1,10 +1,12 @@
+use std::fs;
 use std::sync::Arc;
 use std::process::Stdio;
 use tokio::process::Command;
 use tokio::io::AsyncBufReadExt;
-use tracing::{info, error, debug};
+use tracing::{info, error, warn, debug};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
 
 use crate::errors::{AgentError, AgentResult};
 use crate::firewall_manager::FirewallManager;
@@ -35,6 +37,7 @@ impl ContainerdRuntime {
         data_dir: &str,
         port: u16,
         network_mode: Option<&str>,
+        network_ip: Option<&str>,
     ) -> AgentResult<String> {
         info!(
             "Creating container: {} from image: {}",
@@ -62,6 +65,9 @@ impl ContainerdRuntime {
             } else if network != "bridge" {
                 // Assume it's a custom network name (e.g., "mc-lan" for macvlan)
                 cmd.arg("--network").arg(network);
+                if let Some(ip) = network_ip {
+                    cmd.arg("--ip").arg(ip);
+                }
             }
             // "bridge" or no network specified = default bridge
         }
@@ -94,6 +100,13 @@ impl ContainerdRuntime {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if let (Some(network), Some(ip)) = (network_mode, network_ip) {
+                if network != "bridge" && network != "host" {
+                    if let Err(err) = Self::release_static_ip(network, ip) {
+                        warn!("Failed to release static IP {} for {}: {}", ip, network, err);
+                    }
+                }
+            }
             return Err(AgentError::ContainerError(format!(
                 "Container creation failed: {}",
                 stderr
@@ -329,6 +342,66 @@ impl ContainerdRuntime {
         Ok(containers)
     }
 
+    pub async fn clean_stale_ip_allocations(&self, network: &str) -> AgentResult<usize> {
+        let allocations_dir = format!("/var/lib/cni/networks/{}", network);
+        let entries = match fs::read_dir(&allocations_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(AgentError::IoError(err.to_string())),
+        };
+
+        let containers = self.list_containers().await?;
+        let mut active_ips = HashSet::new();
+        let mut running_containers = 0;
+        for container in containers {
+            if !container.status.contains("Up") {
+                continue;
+            }
+            running_containers += 1;
+            if let Ok(ip) = self.get_container_ip(&container.id).await {
+                if !ip.is_empty() {
+                    active_ips.insert(ip);
+                }
+            }
+        }
+
+        if running_containers > 0 && active_ips.is_empty() {
+            // Avoid deleting allocations if we couldn't resolve any active IPs.
+            return Ok(0);
+        }
+
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry.map_err(|err| AgentError::IoError(err.to_string()))?;
+            let path = entry.path();
+            let name = match entry.file_name().into_string() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            if name == "lock" || name.starts_with("last_reserved_ip") {
+                continue;
+            }
+
+            if name.parse::<Ipv4Addr>().is_err() {
+                continue;
+            }
+
+            if !active_ips.contains(&name) {
+                if fs::remove_file(&path).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+
+    fn release_static_ip(network: &str, ip: &str) -> std::io::Result<()> {
+        let path = format!("/var/lib/cni/networks/{}/{}", network, ip);
+        fs::remove_file(path)
+    }
+
     /// Get container stats
     pub async fn get_stats(&self, container_id: &str) -> AgentResult<ContainerStats> {
         let output = Command::new("nerdctl")
@@ -388,11 +461,118 @@ impl ContainerdRuntime {
     }
 
     /// Send stdin to container
-    pub async fn send_input(&self, container_id: &str, input: &str) -> AgentResult<()> {
-        // This is a placeholder - actual implementation would require
-        // attaching to the container and piping input
+    pub async fn send_input(
+        &self,
+        container_id: &str,
+        input: &str,
+        process_hint: Option<&str>,
+    ) -> AgentResult<()> {
         debug!("Sending input to container: {}", container_id);
+        let target_path = self
+            .resolve_stdin_path(container_id, process_hint)
+            .await
+            .unwrap_or_else(|| "/proc/1/fd/0".to_string());
+        let escaped = input.replace('\'', "'\\''");
+        let command = format!("printf '%s' '{}' > {}", escaped, target_path);
+        let output = Command::new("nerdctl")
+            .arg("--namespace")
+            .arg(&self.namespace)
+            .arg("exec")
+            .arg(container_id)
+            .arg("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AgentError::ContainerError(format!(
+                "Failed to send input to container: {}",
+                stderr
+            )));
+        }
+
         Ok(())
+    }
+
+    async fn resolve_stdin_path(
+        &self,
+        container_id: &str,
+        process_hint: Option<&str>,
+    ) -> Option<String> {
+        let ps_output = Command::new("nerdctl")
+            .arg("--namespace")
+            .arg(&self.namespace)
+            .arg("exec")
+            .arg(container_id)
+            .arg("sh")
+            .arg("-c")
+            .arg("ps -eo pid,ppid,comm,args")
+            .output()
+            .await
+            .ok()?;
+
+        if !ps_output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&ps_output.stdout);
+        let mut candidates: Vec<(i32, i32, String, String)> = Vec::new();
+
+        for (idx, line) in stdout.lines().enumerate() {
+            if idx == 0 {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let pid = match parts.next().and_then(|v| v.parse::<i32>().ok()) {
+                Some(value) => value,
+                None => continue,
+            };
+            let ppid = match parts.next().and_then(|v| v.parse::<i32>().ok()) {
+                Some(value) => value,
+                None => continue,
+            };
+            let comm = parts.next().unwrap_or("").to_string();
+            let args = parts.collect::<Vec<_>>().join(" ");
+            candidates.push((pid, ppid, comm, args));
+        }
+
+        if let Some(hint) = process_hint {
+            let hint_lower = hint.to_lowercase();
+            let mut matches = candidates
+                .iter()
+                .filter(|(_, _, comm, args)| {
+                    comm.to_lowercase() == hint_lower || args.to_lowercase().contains(&hint_lower)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            matches.sort_by_key(|(pid, ppid, _, _)| (*ppid, *pid));
+            if let Some((pid, _, _, _)) = matches.first() {
+                debug!(
+                    "Resolved stdin path for {} using hint '{}': /proc/{}/fd/0",
+                    container_id, hint, pid
+                );
+                return Some(format!("/proc/{}/fd/0", pid));
+            }
+        }
+
+        let mut children_of_init = candidates
+            .iter()
+            .filter(|(_, ppid, _, _)| *ppid == 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        if children_of_init.len() == 1 {
+            if let Some((pid, _, _, _)) = children_of_init.pop() {
+                debug!(
+                    "Resolved stdin path for {} using PID 1 child: /proc/{}/fd/0",
+                    container_id, pid
+                );
+                return Some(format!("/proc/{}/fd/0", pid));
+            }
+        }
+
+        None
     }
 
     /// Get container IP address

@@ -12,9 +12,9 @@ function AppLayout() {
   useServerStateUpdates();
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-50">
       <Header />
-      <div className="flex">
+      <div className="flex flex-1">
         <Sidebar />
         <main className={`flex-1 px-6 py-6 ${sidebarCollapsed ? 'pl-4' : 'pl-8'}`}>
           <div className="space-y-4">

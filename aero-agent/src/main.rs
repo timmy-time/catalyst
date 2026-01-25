@@ -139,12 +139,25 @@ impl AeroAgent {
 
 #[tokio::main]
 async fn main() -> AgentResult<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("aero_agent=info,tokio=info")
-        .init();
+    // Load config first so logging level/format can be applied.
+    let config = AgentConfig::from_file("./config.toml")
+        .or_else(|_| AgentConfig::from_env())
+        .map_err(|e| AgentError::ConfigError(e.to_string()))?;
+
+    let filter = format!("aero_agent={},tokio=info", config.logging.level);
+    if config.logging.format == "json" {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .init();
+    }
 
     info!("Aero Agent starting");
+    info!("Configuration loaded: {:?}", config);
 
     // Run system initialization
     info!("Running system setup and dependency check...");
@@ -152,13 +165,6 @@ async fn main() -> AgentResult<()> {
         warn!("System setup encountered issues: {}", e);
         warn!("Continuing with existing configuration...");
     }
-
-    // Load config
-    let config = AgentConfig::from_file("./config.toml")
-        .or_else(|_| AgentConfig::from_env())
-        .map_err(|e| AgentError::ConfigError(e.to_string()))?;
-
-    info!("Configuration loaded: {:?}", config);
 
     // Create and run agent
     let agent = AeroAgent::new(config).await?;

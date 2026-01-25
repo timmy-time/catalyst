@@ -15,6 +15,10 @@ function CreateServerModal() {
   const [cpu, setCpu] = useState('1');
   const [port, setPort] = useState('25565');
   const [environment, setEnvironment] = useState<Record<string, string>>({});
+  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan' | 'mc-lan-static'>(
+    'mc-lan',
+  );
+  const [staticIp, setStaticIp] = useState('');
 
   const { data: templates = [] } = useTemplates();
   const { data: nodes = [] } = useNodes();
@@ -37,6 +41,11 @@ function CreateServerModal() {
   const mutation = useMutation({
     mutationFn: async () => {
       // Create server first
+      const networkEnv =
+        networkMode === 'mc-lan-static' && staticIp.trim()
+          ? { AERO_NETWORK_IP: staticIp.trim() }
+          : {};
+
       const server = await serversApi.create({
         name,
         templateId,
@@ -45,8 +54,11 @@ function CreateServerModal() {
         allocatedMemoryMb: Number(memory),
         allocatedCpuCores: Number(cpu),
         primaryPort: Number(port),
-        networkMode: 'bridge',
-        environment,
+        networkMode,
+        environment: {
+          ...environment,
+          ...networkEnv,
+        },
       });
       
       // Then trigger installation
@@ -57,13 +69,17 @@ function CreateServerModal() {
       return server;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['servers'] });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'servers',
+      });
       notifySuccess('Server created and installation started');
       setOpen(false);
       setName('');
       setTemplateId('');
       setNodeId('');
       setEnvironment({});
+      setNetworkMode('mc-lan');
+      setStaticIp('');
     },
     onError: (error: any) => {
       const message = error?.response?.data?.error || 'Failed to create server';
@@ -71,7 +87,12 @@ function CreateServerModal() {
     },
   });
 
-  const disableSubmit = !name || !templateId || !nodeId || mutation.isPending;
+  const disableSubmit =
+    !name ||
+    !templateId ||
+    !nodeId ||
+    mutation.isPending ||
+    (networkMode === 'mc-lan-static' && !staticIp.trim());
 
   return (
     <div>
@@ -184,6 +205,31 @@ function CreateServerModal() {
                   max={65535}
                 />
               </label>
+              <label className="block space-y-1">
+                <span className="text-slate-300">Network</span>
+                <select
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:border-sky-500 focus:outline-none"
+                  value={networkMode}
+                  onChange={(e) =>
+                    setNetworkMode(e.target.value as 'bridge' | 'mc-lan' | 'mc-lan-static')
+                  }
+                >
+                  <option value="bridge">Node IP (port mapping)</option>
+                  <option value="mc-lan">macvlan (DHCP)</option>
+                  <option value="mc-lan-static">macvlan (static IP)</option>
+                </select>
+              </label>
+              {networkMode === 'mc-lan-static' && (
+                <label className="block space-y-1">
+                  <span className="text-slate-300">Static IP</span>
+                  <input
+                    className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:border-sky-500 focus:outline-none"
+                    value={staticIp}
+                    onChange={(e) => setStaticIp(e.target.value)}
+                    placeholder="192.168.1.50"
+                  />
+                </label>
+              )}
               {templateVariables.length > 0 && (
                 <div className="space-y-3 border-t border-slate-800 pt-3">
                   <h3 className="text-sm font-semibold text-slate-200">Environment Variables</h3>

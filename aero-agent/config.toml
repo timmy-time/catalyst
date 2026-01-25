@@ -29,7 +29,7 @@ namespace = "aero"
 
 [logging]
 # Log level: trace, debug, info, warn, error
-level = "info"
+level = "debug"
 
 # Log format: json or text
 format = "json"

@@ -9,6 +9,7 @@ use tracing::{info, error, warn, debug};
 use serde_json::{json, Value};
 use std::time::Duration;
 use sysinfo::System;
+use std::collections::HashMap;
 
 use crate::{AgentConfig, ContainerdRuntime, FileManager, AgentError, AgentResult};
 
@@ -22,6 +23,12 @@ pub struct WebSocketHandler {
     runtime: Arc<ContainerdRuntime>,
     file_manager: Arc<FileManager>,
     ws_writer: Arc<Mutex<Option<Arc<Mutex<WsWriter>>>>>,
+    console_targets: Arc<RwLock<HashMap<String, ConsoleTarget>>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ConsoleTarget {
+    process_hint: Option<String>,
 }
 
 impl Clone for WebSocketHandler {
@@ -31,6 +38,7 @@ impl Clone for WebSocketHandler {
             runtime: self.runtime.clone(),
             file_manager: self.file_manager.clone(),
             ws_writer: self.ws_writer.clone(),
+            console_targets: self.console_targets.clone(),
         }
     }
 }
@@ -46,6 +54,7 @@ impl WebSocketHandler {
             runtime,
             file_manager,
             ws_writer: Arc::new(Mutex::new(None)),
+            console_targets: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -155,6 +164,28 @@ impl WebSocketHandler {
                 interval.tick().await;
                 if let Err(e) = handler_clone.check_for_crashed_containers().await {
                     error!("Failed to check for crashes: {}", e);
+                }
+            }
+        });
+
+        // Clean stale CNI static allocations (every 60 seconds)
+        let handler_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                match handler_clone
+                    .runtime
+                    .clean_stale_ip_allocations("mc-lan-static")
+                    .await
+                {
+                    Ok(removed) if removed > 0 => {
+                        info!("Cleaned {} stale static IP allocations", removed);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!("Failed to clean static IP allocations: {}", e);
+                    }
                 }
             }
         });
@@ -433,6 +464,8 @@ impl WebSocketHandler {
             }
         }
 
+        let network_ip = env_map.get("AERO_NETWORK_IP").cloned();
+
         // Get SERVER_DIR from environment
         let server_dir = environment.get("SERVER_DIR")
             .and_then(|v| v.as_str())
@@ -448,8 +481,15 @@ impl WebSocketHandler {
         // Replace template variables in startup command
         let mut final_startup_command = startup_command.to_string();
         
-        // Add MEMORY to environment for variable replacement
-        env_map.insert("MEMORY".to_string(), memory_mb.to_string());
+        // Add MEMORY to environment for variable replacement.
+        // If MEMORY_PERCENT is set, reserve headroom by using a percentage of the allocation.
+        let effective_memory_mb = env_map
+            .get("MEMORY_PERCENT")
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| (1..=100).contains(value))
+            .map(|percent| std::cmp::max(256, memory_mb.saturating_mul(percent) / 100))
+            .unwrap_or(memory_mb);
+        env_map.insert("MEMORY".to_string(), effective_memory_mb.to_string());
         env_map.insert("PORT".to_string(), primary_port.to_string());
         
         // Replace all {{VARIABLE}} placeholders
@@ -459,6 +499,17 @@ impl WebSocketHandler {
         }
 
         info!("Final startup command: {}", final_startup_command);
+
+        // Persist console target hints inferred from startup command.
+        if let Some(process_hint) = infer_process_hint(&final_startup_command) {
+            let mut targets = self.console_targets.write().await;
+            targets.insert(
+                server_uuid.to_string(),
+                ConsoleTarget {
+                    process_hint: Some(process_hint),
+                },
+            );
+        }
 
         // Check if container already exists (from installation or previous run)
         let container_exists = self.runtime.container_exists(server_uuid).await;
@@ -484,6 +535,7 @@ impl WebSocketHandler {
             &server_dir,
             primary_port,
             network_mode,
+            network_ip.as_deref(),
         ).await?;
 
         // Spawn log streamer
@@ -574,6 +626,7 @@ impl WebSocketHandler {
         let server_id = msg["serverId"].as_str().ok_or_else(|| {
             AgentError::InvalidRequest("Missing serverId".to_string())
         })?;
+        let server_uuid = msg["serverUuid"].as_str().unwrap_or(server_id);
 
         let command = msg["command"].as_str().ok_or_else(|| {
             AgentError::InvalidRequest("Missing command".to_string())
@@ -581,9 +634,18 @@ impl WebSocketHandler {
 
         info!("Executing command on server {}: {}", server_id, command);
 
+        let console_target = {
+            let targets = self.console_targets.read().await;
+            targets.get(server_uuid).cloned().unwrap_or_default()
+        };
+
         // Send command to container stdin (same as console input)
         self.runtime
-            .send_input(server_id, &format!("{}\n", command))
+            .send_input(
+                server_uuid,
+                &format!("{}\n", command),
+                console_target.process_hint.as_deref(),
+            )
             .await?;
 
         // Send console output notification
@@ -601,6 +663,7 @@ impl WebSocketHandler {
         let server_id = msg["serverId"].as_str().ok_or_else(|| {
             AgentError::InvalidRequest("Missing serverId".to_string())
         })?;
+        let server_uuid = msg["serverUuid"].as_str().unwrap_or(server_id);
 
         let data = msg["data"].as_str().ok_or_else(|| {
             AgentError::InvalidRequest("Missing data".to_string())
@@ -608,8 +671,19 @@ impl WebSocketHandler {
 
         debug!("Console input for {}: {}", server_id, data);
 
+        let console_target = {
+            let targets = self.console_targets.read().await;
+            targets.get(server_uuid).cloned().unwrap_or_default()
+        };
+
         // Send to container stdin
-        self.runtime.send_input(server_id, data).await?;
+        self.runtime
+            .send_input(
+                server_uuid,
+                data,
+                console_target.process_hint.as_deref(),
+            )
+            .await?;
 
         Ok(())
     }
@@ -952,12 +1026,11 @@ impl WebSocketHandler {
             // Get container stats
             match self.runtime.get_stats(&container.id).await {
                 Ok(stats) => {
-                    // Extract server ID from container ID
-                    let server_id = &container.id;
+                    // Extract server ID from container name (fallback to container ID).
+                    let server_id = extract_server_id(&container);
                     
                     // Parse stats (nerdctl returns strings like "15.32%" or "100MiB / 200MiB")
-                    let cpu_percent = stats.cpu_percent.trim_end_matches('%')
-                        .parse::<f32>().unwrap_or(0.0);
+                    let cpu_percent = parse_percent_string(&stats.cpu_percent) as f32;
                     
                     // Parse memory usage (format: "1.996GiB / 2GiB")
                     let memory_mb = if let Some(usage_part) = stats.memory_usage.split('/').next() {
@@ -1023,7 +1096,7 @@ impl WebSocketHandler {
                 };
 
                 // Send crashed state update
-                let server_id = &container.id; // Container ID is the server UUID
+                let server_id = extract_server_id(&container);
                 
                 warn!("Detected crashed container: {} (exit code: {})", server_id, exit_code);
                 
@@ -1055,17 +1128,52 @@ impl WebSocketHandler {
     }
 }
 
+fn infer_process_hint(startup_command: &str) -> Option<String> {
+    let trimmed = startup_command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let first = parts.next()?;
+
+    let shell_like = matches!(first, "sh" | "bash" | "/bin/sh" | "/bin/bash");
+    if shell_like {
+        let next = parts.next().unwrap_or("");
+        if next == "-c" || next == "-lc" {
+            let rest = parts.collect::<Vec<_>>().join(" ");
+            return rest.split_whitespace().next().map(|value| value.to_string());
+        }
+    }
+
+    Some(first.to_string())
+}
+
+fn extract_server_id(container: &crate::runtime_manager::ContainerInfo) -> &str {
+    // nerdctl Names can be comma-separated for multiple names; take the first.
+    let name = container.names.split(',').next().unwrap_or("").trim();
+    if name.is_empty() {
+        &container.id
+    } else {
+        name
+    }
+}
+
 // Helper functions to parse nerdctl stats strings
 fn parse_memory_string(s: &str) -> i64 {
     let s = s.trim();
     if s.ends_with("GiB") || s.ends_with("GB") {
-        let num: f64 = s.trim_end_matches("GiB").trim_end_matches("GB").parse().unwrap_or(0.0);
+        let num = parse_number_prefix(s);
         (num * 1024.0) as i64
     } else if s.ends_with("MiB") || s.ends_with("MB") {
-        s.trim_end_matches("MiB").trim_end_matches("MB").parse().unwrap_or(0)
+        let num = parse_number_prefix(s);
+        num as i64
     } else if s.ends_with("KiB") || s.ends_with("KB") || s.ends_with("kB") {
-        let num: f64 = s.trim_end_matches("KiB").trim_end_matches("KB").trim_end_matches("kB").parse().unwrap_or(0.0);
+        let num = parse_number_prefix(s);
         (num / 1024.0) as i64
+    } else if s.ends_with('B') {
+        let num = parse_number_prefix(s);
+        (num / 1024.0 / 1024.0) as i64
     } else {
         0
     }
@@ -1073,20 +1181,37 @@ fn parse_memory_string(s: &str) -> i64 {
 
 fn parse_bytes_string(s: &str) -> i64 {
     let s = s.trim();
-    if s.ends_with("GB") {
-        let num: f64 = s.trim_end_matches("GB").parse().unwrap_or(0.0);
+    if s.ends_with("GiB") || s.ends_with("GB") {
+        let num = parse_number_prefix(s);
         (num * 1_000_000_000.0) as i64
-    } else if s.ends_with("MB") {
-        let num: f64 = s.trim_end_matches("MB").parse().unwrap_or(0.0);
+    } else if s.ends_with("MiB") || s.ends_with("MB") {
+        let num = parse_number_prefix(s);
         (num * 1_000_000.0) as i64
-    } else if s.ends_with("kB") || s.ends_with("KB") {
-        let num: f64 = s.trim_end_matches("kB").trim_end_matches("KB").parse().unwrap_or(0.0);
+    } else if s.ends_with("KiB") || s.ends_with("KB") || s.ends_with("kB") {
+        let num = parse_number_prefix(s);
         (num * 1_000.0) as i64
     } else if s.ends_with('B') {
-        s.trim_end_matches('B').parse().unwrap_or(0)
+        let num = parse_number_prefix(s);
+        num as i64
     } else {
         0
     }
+}
+
+fn parse_percent_string(s: &str) -> f64 {
+    parse_number_prefix(s)
+}
+
+fn parse_number_prefix(s: &str) -> f64 {
+    let mut buf = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            buf.push(ch);
+        } else if !buf.is_empty() {
+            break;
+        }
+    }
+    buf.parse::<f64>().unwrap_or(0.0)
 }
 
 fn get_uptime() -> u64 {

@@ -15,11 +15,18 @@ export function useServerStateUpdates() {
       ) {
         const nextState = message.state;
 
+        const matchesServerId = (server: any) =>
+          server?.id === message.serverId || server?.uuid === message.serverId;
+
         // Update cached server detail if present.
-        queryClient.setQueryData(['server', message.serverId], (previous: any) => {
-          if (!previous || typeof previous !== 'object') return previous;
-          return { ...previous, status: nextState };
-        });
+        queryClient.setQueriesData(
+          { predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'server' },
+          (previous: any) => {
+            if (!previous || typeof previous !== 'object') return previous;
+            if (!matchesServerId(previous)) return previous;
+            return { ...previous, status: nextState };
+          },
+        );
 
         const serverListPredicate = (query: { queryKey: unknown[] }) =>
           Array.isArray(query.queryKey) && query.queryKey[0] === 'servers';
@@ -28,13 +35,17 @@ export function useServerStateUpdates() {
         queryClient.setQueriesData({ predicate: serverListPredicate }, (previous: any) => {
           if (!Array.isArray(previous)) return previous;
           return previous.map((server) =>
-            server?.id === message.serverId ? { ...server, status: nextState } : server,
+            matchesServerId(server) ? { ...server, status: nextState } : server,
           );
         });
 
         // Invalidate to refetch fresh data.
         queryClient.invalidateQueries({
-          queryKey: ['server', message.serverId],
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            query.queryKey[0] === 'server' &&
+            query.state.data &&
+            matchesServerId(query.state.data),
         });
         queryClient.invalidateQueries({
           predicate: serverListPredicate,

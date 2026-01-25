@@ -10,7 +10,10 @@ type Props = {
 function ServerControls({ serverId, status }: Props) {
   const queryClient = useQueryClient();
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['servers'] });
+  const invalidate = () =>
+    queryClient.invalidateQueries({
+      predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === 'servers',
+    });
 
   const start = useMutation({
     mutationFn: () => serversApi.start(serverId),

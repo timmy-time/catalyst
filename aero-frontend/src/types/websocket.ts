@@ -1,20 +1,30 @@
 export interface ConsoleLogMessage {
-  type: 'server_log';
+  type: 'console_output' | 'server_log';
   serverId: string;
-  line: string;
+  stream?: string;
+  data?: string;
+  line?: string;
+  timestamp?: number | string;
 }
 
 export interface ServerStateMessage {
   type: 'server_state' | 'server_state_update';
   serverId: string;
   state: string;
+  reason?: string;
+  timestamp?: number | string;
 }
 
 export interface ResourceStatsMessage {
   type: 'resource_stats';
   serverId: string;
-  cpu: number;
-  memory: number;
+  cpuPercent?: number;
+  memoryUsageMb?: number;
+  networkRxBytes?: number;
+  networkTxBytes?: number;
+  diskUsageMb?: number;
+  cpu?: number;
+  memory?: number;
 }
 
 export type WebSocketEvent = ConsoleLogMessage | ServerStateMessage | ResourceStatsMessage;

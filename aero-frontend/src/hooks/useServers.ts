@@ -1,10 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { serversApi } from '../services/api/servers';
-import type { ServerListParams } from '../types/server';
+import type { Server, ServerListParams } from '../types/server';
+
+const transitionalStatuses = new Set(['installing', 'starting', 'stopping', 'transferring']);
 
 export function useServers(params?: ServerListParams) {
   return useQuery({
     queryKey: ['servers', params],
     queryFn: () => serversApi.list(params),
+    refetchInterval: (query) =>
+      (query.state.data as Server[] | undefined)?.some((server) =>
+        transitionalStatuses.has(server.status),
+      )
+        ? 2000
+        : false,
   });
 }

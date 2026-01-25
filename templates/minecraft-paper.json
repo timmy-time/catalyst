@@ -5,7 +5,7 @@
   "author": "Aero Maintainers",
   "version": "1.20.4",
   "image": "eclipse-temurin:21-jre",
-  "startup": "java -Xms{{MEMORY}}M -Xmx{{MEMORY}}M -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:G1HeapRegionSize=16M -jar paper.jar nogui",
+  "startup": "java -Xms{{MEMORY_XMS}}M -Xmx{{MEMORY}}M -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:G1HeapRegionSize=16M -jar paper.jar nogui",
   "stopCommand": "stop",
   "sendSignalTo": "SIGTERM",
   "variables": [
@@ -16,6 +16,22 @@
       "required": true,
       "input": "number",
       "rules": ["between:512,16384"]
+    },
+    {
+      "name": "MEMORY_PERCENT",
+      "description": "Percent of allocated memory to give the JVM",
+      "default": "75",
+      "required": false,
+      "input": "number",
+      "rules": ["between:50,95"]
+    },
+    {
+      "name": "MEMORY_XMS_PERCENT",
+      "description": "Percent of JVM max heap to use for Xms",
+      "default": "50",
+      "required": false,
+      "input": "number",
+      "rules": ["between:25,90"]
     },
     {
       "name": "PORT",

@@ -17,10 +17,14 @@ impl SystemSetup {
         // 2. Check and install containerd/nerdctl
         Self::ensure_container_runtime(&pkg_manager).await?;
 
-        // 3. Setup CNI networking
-        Self::setup_cni_networking().await?;
+        // 3. Ensure IP tooling is available (iproute2)
+        Self::ensure_iproute(&pkg_manager).await?;
 
-        // 4. Start DHCP daemon
+        // 4. Setup CNI networking
+        Self::setup_cni_networking().await?;
+        Self::setup_cni_static_networking().await?;
+
+        // 5. Start DHCP daemon
         Self::ensure_dhcp_daemon().await?;
 
         info!("✅ System initialization complete!");
@@ -30,6 +34,7 @@ impl SystemSetup {
     /// Detect the system's package manager
     fn detect_package_manager() -> Result<String, Box<dyn std::error::Error>> {
         let managers = vec![
+            ("apk", "apk"),
             ("apt-get", "apt"),
             ("yum", "yum"),
             ("dnf", "dnf"),
@@ -57,6 +62,9 @@ impl SystemSetup {
         warn!("Container runtime not found, installing...");
 
         match pkg_manager {
+            "apk" => {
+                Self::run_command("apk", &["add", "--no-cache", "containerd"])?;
+            }
             "apt" => {
                 Self::run_command("apt-get", &["update", "-qq"])?;
                 Self::run_command("apt-get", &["install", "-y", "-qq", "containerd"])?;
@@ -66,6 +74,9 @@ impl SystemSetup {
             }
             "pacman" => {
                 Self::run_command("pacman", &["-S", "--noconfirm", "containerd"])?;
+            }
+            "zypper" => {
+                Self::run_command("zypper", &["--non-interactive", "install", "containerd"])?;
             }
             _ => {
                 warn!("Automatic installation not supported for {}", pkg_manager);
@@ -80,6 +91,42 @@ impl SystemSetup {
         }
 
         info!("✓ Container runtime installed");
+        Ok(())
+    }
+
+    /// Ensure `ip` command is available
+    async fn ensure_iproute(pkg_manager: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if Command::new("which").arg("ip").output()?.status.success() {
+            info!("✓ ip already installed");
+            return Ok(());
+        }
+
+        warn!("ip command not found, installing iproute package...");
+
+        match pkg_manager {
+            "apk" => {
+                Self::run_command("apk", &["add", "--no-cache", "iproute2"])?;
+            }
+            "apt" => {
+                Self::run_command("apt-get", &["update", "-qq"])?;
+                Self::run_command("apt-get", &["install", "-y", "-qq", "iproute2"])?;
+            }
+            "yum" | "dnf" => {
+                Self::run_command(pkg_manager, &["install", "-y", "iproute"])?;
+            }
+            "pacman" => {
+                Self::run_command("pacman", &["-S", "--noconfirm", "iproute2"])?;
+            }
+            "zypper" => {
+                Self::run_command("zypper", &["--non-interactive", "install", "iproute2"])?;
+            }
+            _ => {
+                warn!("Automatic installation not supported for {}", pkg_manager);
+                return Err(format!("Please install iproute2 manually for {}", pkg_manager).into());
+            }
+        }
+
+        info!("✓ ip installed");
         Ok(())
     }
 
@@ -112,15 +159,19 @@ impl SystemSetup {
         // Create CNI directory if it doesn't exist
         fs::create_dir_all(cni_dir)?;
 
-        // Check if config already exists
-        if Path::new(&cni_config).exists() {
-            info!("✓ CNI network configuration already exists");
-            return Ok(());
-        }
-
         // Detect the primary network interface
         let interface = Self::detect_network_interface()?;
         info!("Detected network interface: {}", interface);
+
+        // Check if config already exists for this interface
+        if Path::new(&cni_config).exists() {
+            let existing = fs::read_to_string(&cni_config).unwrap_or_default();
+            if existing.contains(&format!("\"master\": \"{}\"", interface)) {
+                info!("✓ CNI network configuration already exists");
+                return Ok(());
+            }
+            info!("CNI config exists but uses a different interface; rewriting");
+        }
 
         // Create macvlan network configuration
         let config = format!(r#"{{
@@ -140,6 +191,61 @@ impl SystemSetup {
 
         fs::write(&cni_config, config)?;
         info!("✓ Created CNI network configuration at {}", cni_config);
+
+        Ok(())
+    }
+
+    /// Setup CNI networking with macvlan and host-local IPAM (static IPs)
+    async fn setup_cni_static_networking() -> Result<(), Box<dyn std::error::Error>> {
+        let cni_dir = "/etc/cni/net.d";
+        let cni_config = format!("{}/mc-lan-static.conflist", cni_dir);
+
+        // Create CNI directory if it doesn't exist
+        fs::create_dir_all(cni_dir)?;
+
+        // Check if config already exists
+        if Path::new(&cni_config).exists() {
+            info!("✓ CNI static network configuration already exists");
+            return Ok(());
+        }
+
+        // Detect the primary network interface
+        let interface = Self::detect_network_interface()?;
+        info!("Detected network interface: {}", interface);
+
+        let gateway = Self::detect_default_gateway()?;
+        let cidr = Self::detect_interface_cidr(&interface)?;
+        let (range_start, range_end) = Self::cidr_usable_range(&cidr)?;
+
+        // Create macvlan network configuration (host-local IPAM)
+        let config = format!(r#"{{
+  "cniVersion": "1.0.0",
+  "name": "mc-lan-static",
+  "plugins": [
+    {{
+      "type": "macvlan",
+      "master": "{}",
+      "mode": "bridge",
+      "ipam": {{
+        "type": "host-local",
+        "ranges": [[
+          {{
+            "subnet": "{}",
+            "rangeStart": "{}",
+            "rangeEnd": "{}",
+            "gateway": "{}"
+          }}
+        ]],
+        "routes": [
+          {{ "dst": "0.0.0.0/0" }}
+        ]
+      }}
+    }}
+  ]
+}}"#, interface, cidr, range_start, range_end, gateway);
+
+        fs::write(&cni_config, config)?;
+        info!("✓ Created CNI static network configuration at {}", cni_config);
 
         Ok(())
     }
@@ -173,6 +279,77 @@ impl SystemSetup {
         }
 
         Err("Could not detect network interface".into())
+    }
+
+    fn detect_default_gateway() -> Result<String, Box<dyn std::error::Error>> {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("ip route show default | awk '/default/ {print $3}' | head -n1")
+            .output()?;
+
+        if output.status.success() {
+            let gateway = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !gateway.is_empty() {
+                return Ok(gateway);
+            }
+        }
+
+        Err("Could not detect default gateway".into())
+    }
+
+    fn detect_interface_cidr(interface: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(format!("ip -4 addr show dev {} | awk '/inet / {{print $2}}' | head -n1", interface))
+            .output()?;
+
+        if output.status.success() {
+            let cidr = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !cidr.is_empty() {
+                return Self::normalize_cidr(&cidr);
+            }
+        }
+
+        Err("Could not detect interface CIDR".into())
+    }
+
+    fn normalize_cidr(cidr: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let (addr_str, prefix_str) = cidr.split_once('/').ok_or("Invalid CIDR format")?;
+        let prefix: u32 = prefix_str.parse()?;
+        if prefix > 32 {
+            return Err("Invalid CIDR prefix".into());
+        }
+
+        let addr: std::net::Ipv4Addr = addr_str.parse()?;
+        let addr_u32 = u32::from(addr);
+        let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+        let network = addr_u32 & mask;
+        Ok(format!("{}/{}", std::net::Ipv4Addr::from(network), prefix))
+    }
+
+    fn cidr_usable_range(cidr: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
+        let (addr_str, prefix_str) = cidr.split_once('/').ok_or("Invalid CIDR format")?;
+        let prefix: u32 = prefix_str.parse()?;
+        if prefix > 32 {
+            return Err("Invalid CIDR prefix".into());
+        }
+
+        let addr: std::net::Ipv4Addr = addr_str.parse()?;
+        let addr_u32 = u32::from(addr);
+        let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+        let network = addr_u32 & mask;
+        let broadcast = network | (!mask);
+
+        if broadcast <= network + 1 {
+            return Err("CIDR has no usable addresses".into());
+        }
+
+        let start = network + 1;
+        let end = broadcast - 1;
+        Ok((
+            std::net::Ipv4Addr::from(start).to_string(),
+            std::net::Ipv4Addr::from(end).to_string(),
+        ))
     }
 
     /// Ensure CNI DHCP daemon is running
