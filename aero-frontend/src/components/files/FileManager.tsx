@@ -7,6 +7,7 @@ import FileUploader from './FileUploader';
 import { useFileManager } from '../../hooks/useFileManager';
 import { filesApi } from '../../services/api/files';
 import type { FileEntry } from '../../types/file';
+import { formatFileMode } from '../../utils/formatters';
 import { notifyError, notifyInfo, notifySuccess } from '../../utils/notify';
 import { buildBreadcrumbs, getParentPath, joinPath, normalizePath } from '../../utils/filePaths';
 
@@ -48,12 +49,17 @@ function FileManager({ serverId }: { serverId: string }) {
   const [archiveName, setArchiveName] = useState('archive.tar.gz');
   const [decompressTarget, setDecompressTarget] = useState(path);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [permissionsEntry, setPermissionsEntry] = useState<FileEntry | null>(null);
+  const [permissionsValue, setPermissionsValue] = useState('');
+  const [permissionsError, setPermissionsError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedPaths(new Set());
     setConfirmDelete(false);
     setShowCompress(false);
     setShowDecompress(false);
+    setPermissionsEntry(null);
+    setPermissionsError(null);
   }, [path]);
 
   useEffect(() => {
@@ -185,6 +191,17 @@ function FileManager({ serverId }: { serverId: string }) {
     onError: () => notifyError('Failed to extract archive'),
   });
 
+  const permissionsMutation = useMutation({
+    mutationFn: async ({ path: targetPath, mode }: { path: string; mode: number }) =>
+      filesApi.updatePermissions(serverId, targetPath, mode),
+    onSuccess: () => {
+      invalidateFiles();
+      setPermissionsEntry(null);
+      notifySuccess('Permissions updated');
+    },
+    onError: () => notifyError('Failed to update permissions'),
+  });
+
   const handleOpen = (entry: FileEntry) => {
     if (entry.isDirectory) {
       setPath(entry.path);
@@ -251,6 +268,33 @@ function FileManager({ serverId }: { serverId: string }) {
     const selected = Array.from(selectedPaths);
     if (!selected.length) return;
     deleteMutation.mutate(selected);
+  };
+
+  const parseModeInput = (value: string) => {
+    const trimmed = value.trim();
+    if (!/^[0-7]{3,4}$/.test(trimmed)) return null;
+    const parsed = parseInt(trimmed, 8);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const handlePermissionsOpen = (entry: FileEntry) => {
+    const fallback = entry.isDirectory ? 0o755 : 0o644;
+    const formatted = formatFileMode(entry.mode ?? fallback);
+    setPermissionsValue(formatted === '---' ? '644' : formatted);
+    setPermissionsEntry(entry);
+    setPermissionsError(null);
+  };
+
+  const handlePermissionsSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!permissionsEntry) return;
+    const parsed = parseModeInput(permissionsValue);
+    if (!parsed) {
+      setPermissionsError('Enter a 3-4 digit octal mode, e.g. 644 or 0755.');
+      return;
+    }
+    setPermissionsError(null);
+    permissionsMutation.mutate({ path: permissionsEntry.path, mode: parsed });
   };
 
   const handleBulkCompressFromEntry = (entry: FileEntry) => {
@@ -567,6 +611,7 @@ function FileManager({ serverId }: { serverId: string }) {
             }}
             onCompress={handleBulkCompressFromEntry}
             onDecompress={handleBulkDecompressFromEntry}
+            onPermissions={handlePermissionsOpen}
           />
         </div>
       </div>
@@ -594,6 +639,71 @@ function FileManager({ serverId }: { serverId: string }) {
               height="calc(90vh - 140px)"
             />
           </div>
+        </div>
+      ) : null}
+
+      {permissionsEntry ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <div
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+            onClick={() => setPermissionsEntry(null)}
+          />
+          <form
+            className="relative z-10 w-full max-w-lg rounded-xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl"
+            onSubmit={handlePermissionsSubmit}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Edit permissions</div>
+                <div className="text-xs text-slate-500">{permissionsEntry.path}</div>
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-300 hover:border-slate-700"
+                onClick={() => setPermissionsEntry(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 text-xs text-slate-400">
+                Mode (octal)
+                <input
+                  className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+                  value={permissionsValue}
+                  onChange={(event) => {
+                    setPermissionsValue(event.target.value);
+                    setPermissionsError(null);
+                  }}
+                  placeholder={permissionsEntry.isDirectory ? '755' : '644'}
+                />
+              </label>
+              <div className="text-xs text-slate-500">
+                Use three or four digits. Example: 644 for files, 755 for folders.
+              </div>
+            </div>
+            {permissionsError ? (
+              <div className="mt-3 rounded-md border border-rose-800 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
+                {permissionsError}
+              </div>
+            ) : null}
+            <div className="mt-4 flex justify-end gap-2 text-xs">
+              <button
+                type="button"
+                className="rounded-md border border-slate-800 px-3 py-1 text-xs text-slate-300 hover:border-slate-700"
+                onClick={() => setPermissionsEntry(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-md bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow hover:bg-sky-500 disabled:opacity-60"
+                disabled={permissionsMutation.isPending}
+              >
+                Update
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>

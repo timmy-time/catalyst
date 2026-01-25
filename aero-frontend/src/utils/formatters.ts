@@ -7,3 +7,9 @@ export const formatBytes = (bytes: number) => {
 };
 
 export const formatPercent = (value: number) => `${value.toFixed(0)}%`;
+
+export const formatFileMode = (mode?: number) => {
+  if (!Number.isFinite(mode)) return '---';
+  const safeMode = mode as number;
+  return safeMode.toString(8).padStart(3, '0');
+};

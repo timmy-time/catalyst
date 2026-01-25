@@ -70,6 +70,7 @@ async function main() {
         "console.write",
         "server.create",
         "server.delete",
+        "admin.read",
       ],
     },
   });

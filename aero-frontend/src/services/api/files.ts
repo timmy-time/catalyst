@@ -16,6 +16,7 @@ type FileListingPayload =
       isDirectory?: boolean;
       type?: string;
       modified?: string;
+      mode?: number | string;
     }>
   | {
       path?: string;
@@ -25,6 +26,7 @@ type FileListingPayload =
         isDirectory?: boolean;
         type?: string;
         modified?: string;
+        mode?: number | string;
       }>;
       message?: string;
     };
@@ -35,8 +37,28 @@ const normalizeModified = (value: unknown) => {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 };
 
+const normalizeMode = (value: unknown) => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^[0-7]{3,4}$/.test(trimmed)) {
+      const parsed = parseInt(trimmed, 8);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+};
+
 const normalizeEntry = (
-  entry: { name: string; size?: number; isDirectory?: boolean; type?: string; modified?: string },
+  entry: {
+    name: string;
+    size?: number;
+    isDirectory?: boolean;
+    type?: string;
+    modified?: string;
+    mode?: number | string;
+  },
   basePath: string,
 ): FileEntry => {
   const name = entry.name ?? 'unknown';
@@ -51,6 +73,7 @@ const normalizeEntry = (
     path: joinPath(basePath, name),
     size,
     isDirectory,
+    mode: normalizeMode(entry.mode),
     modified: normalizeModified(entry.modified),
   };
 };
@@ -131,6 +154,14 @@ export const filesApi = {
     const { data } = await apiClient.post<ApiResponse<void>>(
       `/api/servers/${serverId}/files/write`,
       { path: normalizedPath, content },
+    );
+    return data;
+  },
+  updatePermissions: async (serverId: string, path: string, mode: number) => {
+    const normalizedPath = normalizePath(path);
+    const { data } = await apiClient.post<ApiResponse<void>>(
+      `/api/servers/${serverId}/files/permissions`,
+      { path: normalizedPath, mode },
     );
     return data;
   },

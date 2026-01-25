@@ -32,11 +32,8 @@ export class WebSocketManager {
         wsUrl.pathname = '/ws';
       }
     } else {
-      const apiBase =
-        (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000';
-      const apiUrl = new URL(apiBase, window.location.origin);
-      wsUrl = new URL('/ws', apiUrl);
-      wsUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = new URL('/ws', window.location.origin);
+      wsUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     }
 
     if (import.meta.env.DEV) {

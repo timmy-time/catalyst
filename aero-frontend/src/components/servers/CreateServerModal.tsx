@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '../../services/api/servers';
@@ -6,6 +6,7 @@ import { useTemplates } from '../../hooks/useTemplates';
 import { useNodes } from '../../hooks/useNodes';
 import { notifyError, notifySuccess } from '../../utils/notify';
 import type { Template } from '../../types/template';
+import { nodesApi } from '../../services/api/nodes';
 
 function CreateServerModal() {
   const [open, setOpen] = useState(false);
@@ -16,14 +17,14 @@ function CreateServerModal() {
   const [cpu, setCpu] = useState('1');
   const [port, setPort] = useState('25565');
   const [environment, setEnvironment] = useState<Record<string, string>>({});
-  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan' | 'mc-lan-static'>(
-    'mc-lan',
-  );
-  const [staticIp, setStaticIp] = useState('');
+  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan'>('mc-lan');
+  const [requestedIp, setRequestedIp] = useState('');
   const navigate = useNavigate();
 
   const { data: templates = [] } = useTemplates();
   const { data: nodes = [] } = useNodes();
+  const [availableIps, setAvailableIps] = useState<string[]>([]);
+  const [ipLoadError, setIpLoadError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   // Get selected template
@@ -40,12 +41,40 @@ function CreateServerModal() {
   // Get first node location (for now, since we need locationId)
   const locationId = nodes[0]?.locationId || '';
 
+  useEffect(() => {
+    setRequestedIp('');
+    let active = true;
+    if (!nodeId || networkMode !== 'mc-lan') {
+      setAvailableIps([]);
+      setIpLoadError(null);
+      return;
+    }
+
+    setIpLoadError(null);
+    nodesApi
+      .availableIps(nodeId, 'mc-lan', 200)
+      .then((ips) => {
+        if (!active) return;
+        setAvailableIps(ips);
+      })
+      .catch((error: any) => {
+        if (!active) return;
+        const message = error?.response?.data?.error || 'Unable to load IP pool';
+        setAvailableIps([]);
+        setIpLoadError(message);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [nodeId, networkMode]);
+
   const mutation = useMutation({
     mutationFn: async () => {
       // Create server first
       const networkEnv =
-        networkMode === 'mc-lan-static' && staticIp.trim()
-          ? { AERO_NETWORK_IP: staticIp.trim() }
+        networkMode === 'mc-lan' && requestedIp.trim()
+          ? { AERO_NETWORK_IP: requestedIp.trim() }
           : {};
 
       const server = await serversApi.create({
@@ -81,7 +110,7 @@ function CreateServerModal() {
       setNodeId('');
       setEnvironment({});
       setNetworkMode('mc-lan');
-      setStaticIp('');
+      setRequestedIp('');
       if (server?.id) {
         navigate(`/servers/${server.id}/console`);
       }
@@ -97,7 +126,7 @@ function CreateServerModal() {
     !templateId ||
     !nodeId ||
     mutation.isPending ||
-    (networkMode === 'mc-lan-static' && !staticIp.trim());
+    false;
 
   return (
     <div>
@@ -220,21 +249,37 @@ function CreateServerModal() {
                   }
                 >
                   <option value="bridge">Node IP (port mapping)</option>
-                  <option value="mc-lan">macvlan (DHCP)</option>
-                  <option value="mc-lan-static">macvlan (static IP)</option>
+                  <option value="mc-lan">macvlan (IPAM)</option>
                 </select>
               </label>
-              {networkMode === 'mc-lan-static' && (
-                <label className="block space-y-1">
-                  <span className="text-slate-300">Static IP</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:border-sky-500 focus:outline-none"
-                    value={staticIp}
-                    onChange={(e) => setStaticIp(e.target.value)}
-                    placeholder="192.168.1.50"
-                  />
-                </label>
-              )}
+              {networkMode === 'mc-lan' ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-400">
+                    Choose an IP from the node pool or leave auto-assign selected.
+                  </p>
+                  <label className="block space-y-1">
+                    <span className="text-slate-300">Requested IP</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:border-sky-500 focus:outline-none"
+                      value={requestedIp}
+                      onChange={(e) => setRequestedIp(e.target.value)}
+                    >
+                      <option value="">Auto-assign</option>
+                      {availableIps.map((ip) => (
+                        <option key={ip} value={ip}>
+                          {ip}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {ipLoadError ? (
+                    <p className="text-xs text-amber-300">{ipLoadError}</p>
+                  ) : null}
+                  {!ipLoadError && availableIps.length === 0 ? (
+                    <p className="text-xs text-slate-500">No available IPs found.</p>
+                  ) : null}
+                </div>
+              ) : null}
               {templateVariables.length > 0 && (
                 <div className="space-y-3 border-t border-slate-800 pt-3">
                   <h3 className="text-sm font-semibold text-slate-200">Environment Variables</h3>

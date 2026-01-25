@@ -14,6 +14,19 @@ export interface Server {
   nodeId: string;
   templateId: string;
   nodeName?: string;
+  primaryPort?: number;
+  primaryIp?: string | null;
+  networkMode?: string;
+  environment?: Record<string, string>;
+  node?: {
+    name?: string;
+    hostname?: string;
+    publicAddress?: string;
+  };
+  template?: {
+    name?: string;
+    image?: string;
+  };
   cpuPercent?: number;
   memoryPercent?: number;
   allocatedMemoryMb?: number;

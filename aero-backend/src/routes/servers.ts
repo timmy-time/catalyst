@@ -9,6 +9,11 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { pipeline } from "stream/promises";
+import {
+  allocateIpForServer,
+  releaseIpForServer,
+  shouldUseIpam,
+} from "../utils/ipam";
 
 export async function serverRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
@@ -88,10 +93,21 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Template not found" });
       }
 
-      // Validate required template variables are provided
       const templateVariables = (template.variables as any[]) || [];
+      const templateDefaults = templateVariables.reduce((acc, variable) => {
+        if (variable?.name && variable?.default !== undefined) {
+          acc[variable.name] = String(variable.default);
+        }
+        return acc;
+      }, {} as Record<string, string>);
+      const resolvedEnvironment = {
+        ...templateDefaults,
+        ...(environment || {}),
+      };
+
+      // Validate required template variables are provided
       const requiredVars = templateVariables.filter((v) => v.required);
-      const missingVars = requiredVars.filter((v) => !environment?.[v.name]);
+      const missingVars = requiredVars.filter((v) => !resolvedEnvironment?.[v.name]);
       
       if (missingVars.length > 0) {
         return reply.status(400).send({
@@ -101,7 +117,7 @@ export async function serverRoutes(app: FastifyInstance) {
 
       // Validate variable values against rules
       for (const variable of templateVariables) {
-        const value = environment?.[variable.name];
+        const value = resolvedEnvironment?.[variable.name];
         if (value && variable.rules) {
           for (const rule of variable.rules) {
             if (rule.startsWith("between:")) {
@@ -182,23 +198,70 @@ export async function serverRoutes(app: FastifyInstance) {
         });
       }
 
-      // Create server
-      const server = await prisma.server.create({
-        data: {
-          uuid: uuidv4(),
-          name,
-          description,
-          templateId,
-          nodeId,
-          locationId,
-          ownerId: userId,
-          allocatedMemoryMb,
-          allocatedCpuCores,
-          primaryPort,
-          networkMode: networkMode || "mc-lan",
-          environment,
-        },
-      });
+      const desiredNetworkMode = networkMode || "mc-lan";
+      const requestedIp =
+        resolvedEnvironment?.AERO_NETWORK_IP &&
+        String(resolvedEnvironment.AERO_NETWORK_IP).trim().length > 0
+          ? String(resolvedEnvironment.AERO_NETWORK_IP).trim()
+          : null;
+
+      // Create server (allocate IP after we have serverId)
+      let server;
+      try {
+        server = await prisma.$transaction(async (tx) => {
+          const created = await tx.server.create({
+            data: {
+              uuid: uuidv4(),
+              name,
+              description,
+              templateId,
+              nodeId,
+              locationId,
+              ownerId: userId,
+              allocatedMemoryMb,
+              allocatedCpuCores,
+              primaryPort,
+              networkMode: desiredNetworkMode,
+              environment: resolvedEnvironment,
+            },
+          });
+
+          if (shouldUseIpam(desiredNetworkMode)) {
+            const allocatedIp = await allocateIpForServer(tx, {
+              nodeId,
+              networkName: desiredNetworkMode,
+              serverId: created.id,
+              requestedIp,
+            });
+
+            if (!allocatedIp) {
+              throw new Error("No IP pool configured for this network");
+            }
+
+            const nextEnvironment = {
+              ...(resolvedEnvironment || {}),
+              AERO_NETWORK_IP: allocatedIp,
+            };
+
+            const updated = await tx.server.update({
+              where: { id: created.id },
+              data: {
+                primaryIp: allocatedIp,
+                environment: nextEnvironment,
+              },
+            });
+
+            return {
+              ...updated,
+              environment: nextEnvironment,
+            } as typeof updated;
+          }
+
+          return created;
+        });
+      } catch (error: any) {
+        return reply.status(400).send({ error: error.message });
+      }
 
       // Grant owner full permissions
       await prisma.serverAccess.create({
@@ -434,6 +497,7 @@ export async function serverRoutes(app: FastifyInstance) {
               name: entry.name,
               size: isDirectory ? 0 : entryStats.size,
               isDirectory,
+              mode: entryStats.mode & 0o777,
               modified: entryStats.mtime.toISOString(),
               type: isDirectory ? "directory" : "file",
             };
@@ -864,6 +928,77 @@ export async function serverRoutes(app: FastifyInstance) {
     }
   );
 
+  // Update file permissions
+  app.post(
+    "/:serverId/files/permissions",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+      const { path: requestedPath, mode } = request.body as { path: string; mode: string | number };
+
+      if (!requestedPath || mode === undefined || mode === null) {
+        return reply.status(400).send({ error: "Missing path or mode" });
+      }
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      const access = await prisma.serverAccess.findFirst({
+        where: {
+          serverId,
+          userId,
+          permissions: { has: "file.write" },
+        },
+      });
+
+      if (!access && server.ownerId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      const normalizedPath = normalizeRequestPath(requestedPath);
+      if (normalizedPath === "/") {
+        return reply.status(400).send({ error: "Invalid path" });
+      }
+
+      let parsedMode: number;
+      if (typeof mode === "number") {
+        parsedMode = mode;
+      } else {
+        const trimmed = String(mode ?? "").trim();
+        parsedMode = /^[0-7]{3,4}$/.test(trimmed) ? parseInt(trimmed, 8) : Number(trimmed);
+      }
+
+      if (!Number.isFinite(parsedMode) || parsedMode < 0 || parsedMode > 0o777) {
+        return reply.status(400).send({ error: "Invalid mode" });
+      }
+
+      try {
+        const { targetPath } = await resolveServerPath(server.uuid, normalizedPath);
+        await fs.chmod(targetPath, parsedMode);
+      } catch (error) {
+        return reply.status(400).send({ error: "Failed to update permissions" });
+      }
+
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          action: "file.chmod",
+          resource: "server",
+          resourceId: serverId,
+          details: { path: normalizedPath, mode: parsedMode },
+        },
+      });
+
+      reply.send({ success: true, message: "Permissions updated" });
+    }
+  );
+
   // Delete file or directory
   app.delete(
     "/:serverId/files/delete",
@@ -951,7 +1086,10 @@ export async function serverRoutes(app: FastifyInstance) {
         });
       }
 
-      await prisma.server.delete({ where: { id: serverId } });
+      await prisma.$transaction(async (tx) => {
+        await releaseIpForServer(tx, serverId);
+        await tx.server.delete({ where: { id: serverId } });
+      });
 
       reply.send({ success: true });
     }
@@ -1058,10 +1196,25 @@ export async function serverRoutes(app: FastifyInstance) {
       const serverDir = process.env.SERVER_DATA_PATH || "/tmp/aero-servers";
       const fullServerDir = `${serverDir}/${server.uuid}`;
       
+      const templateVariables = (server.template.variables as any[]) || [];
+      const templateDefaults = templateVariables.reduce((acc, variable) => {
+        if (variable?.name && variable?.default !== undefined) {
+          acc[variable.name] = String(variable.default);
+        }
+        return acc;
+      }, {} as Record<string, string>);
+
       const environment = {
+        ...templateDefaults,
         ...(server.environment as Record<string, string>),
         SERVER_DIR: fullServerDir,
       };
+      if (server.primaryIp && !environment.AERO_NETWORK_IP) {
+        environment.AERO_NETWORK_IP = server.primaryIp;
+      }
+      if (server.primaryIp && !environment.AERO_NETWORK_IP) {
+        environment.AERO_NETWORK_IP = server.primaryIp;
+      }
 
       const success = await gateway.sendToAgent(server.nodeId, {
         type: "install_server",
@@ -1145,7 +1298,16 @@ export async function serverRoutes(app: FastifyInstance) {
       const serverDir = process.env.SERVER_DATA_PATH || "/tmp/aero-servers";
       const fullServerDir = `${serverDir}/${server.uuid}`;
       
+      const templateVariables = (server.template.variables as any[]) || [];
+      const templateDefaults = templateVariables.reduce((acc, variable) => {
+        if (variable?.name && variable?.default !== undefined) {
+          acc[variable.name] = String(variable.default);
+        }
+        return acc;
+      }, {} as Record<string, string>);
+
       const environment = {
+        ...templateDefaults,
         ...(server.environment as Record<string, string>),
         SERVER_DIR: fullServerDir,
       };
@@ -1188,6 +1350,7 @@ export async function serverRoutes(app: FastifyInstance) {
         where: { id: serverId },
         include: {
           node: true,
+          template: true,
         },
       });
 
@@ -1232,6 +1395,7 @@ export async function serverRoutes(app: FastifyInstance) {
         type: "stop_server",
         serverId: server.id,
         serverUuid: server.uuid,
+        template: server.template,
       });
 
       if (!success) {
@@ -1306,6 +1470,7 @@ export async function serverRoutes(app: FastifyInstance) {
           type: "stop_server",
           serverId: server.id,
           serverUuid: server.uuid,
+          template: server.template,
         });
         await prisma.server.update({
           where: { id: serverId },
@@ -1321,6 +1486,9 @@ export async function serverRoutes(app: FastifyInstance) {
         ...(server.environment as Record<string, string>),
         SERVER_DIR: fullServerDir,
       };
+      if (server.primaryIp && !environment.AERO_NETWORK_IP) {
+        environment.AERO_NETWORK_IP = server.primaryIp;
+      }
 
       const success = await gateway.sendToAgent(server.nodeId, {
         type: "restart_server",
@@ -1598,15 +1766,41 @@ export async function serverRoutes(app: FastifyInstance) {
         //   backupPath: remoteBackupPath
         // });
 
-        // Step 5: Update server's nodeId
-        await prisma.server.update({
-          where: { id },
-          data: {
-            nodeId: targetNodeId,
-            status: "stopped",
-            containerId: null, // Will be regenerated on new node
-            containerName: null,
-          },
+        // Step 5: Update server's nodeId and reassign IP if using IPAM
+        await prisma.$transaction(async (tx) => {
+          let nextEnvironment = server.environment as Record<string, string>;
+          let nextPrimaryIp: string | null = server.primaryIp;
+
+          if (shouldUseIpam(server.networkMode)) {
+            await releaseIpForServer(tx, id);
+            const allocatedIp = await allocateIpForServer(tx, {
+              nodeId: targetNodeId,
+              networkName: server.networkMode,
+              serverId: id,
+            });
+
+            if (!allocatedIp) {
+              throw new Error("No IP pool configured for target node network");
+            }
+
+            nextPrimaryIp = allocatedIp;
+            nextEnvironment = {
+              ...(server.environment as Record<string, string>),
+              AERO_NETWORK_IP: allocatedIp,
+            };
+          }
+
+          await tx.server.update({
+            where: { id },
+            data: {
+              nodeId: targetNodeId,
+              primaryIp: nextPrimaryIp,
+              environment: nextEnvironment,
+              status: "stopped",
+              containerId: null, // Will be regenerated on new node
+              containerName: null,
+            },
+          });
         });
 
         await prisma.serverLog.create({

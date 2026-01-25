@@ -3,6 +3,7 @@ export type FileEntry = {
   path: string;
   size: number;
   isDirectory: boolean;
+  mode?: number;
   modified?: string;
 };
 

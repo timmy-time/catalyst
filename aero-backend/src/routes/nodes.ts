@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
 import { randomBytes } from "crypto";
+import { listAvailableIps } from "../utils/ipam";
 
 export async function nodeRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
@@ -363,6 +364,37 @@ export async function nodeRoutes(app: FastifyInstance) {
       await prisma.node.delete({ where: { id: nodeId } });
 
       reply.send({ success: true });
+    }
+  );
+
+  // List available IPs from IPAM pool for a node/network
+  app.get(
+    "/:nodeId/ip-availability",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { nodeId } = request.params as { nodeId: string };
+      const { networkName = "mc-lan", limit = "200" } = request.query as {
+        networkName?: string;
+        limit?: string;
+      };
+
+      const node = await prisma.node.findUnique({ where: { id: nodeId } });
+      if (!node) {
+        return reply.status(404).send({ error: "Node not found" });
+      }
+
+      const parsedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+      const available = await listAvailableIps(prisma, {
+        nodeId,
+        networkName,
+        limit: parsedLimit,
+      });
+
+      if (!available) {
+        return reply.status(404).send({ error: "No IP pool configured for this network" });
+      }
+
+      reply.send({ success: true, data: available });
     }
   );
 }

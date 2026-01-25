@@ -75,6 +75,15 @@ impl ContainerdRuntime {
         // Volume mount (host data directory → /data in container)
         cmd.arg("-v").arg(format!("{}:/data", data_dir));
 
+        // Provide stable host identifiers for apps that derive encryption keys from hardware UUID.
+        add_readonly_mount(&mut cmd, "/etc/machine-id", "/etc/machine-id");
+        add_readonly_mount(&mut cmd, "/var/lib/dbus/machine-id", "/var/lib/dbus/machine-id");
+        add_readonly_mount(
+            &mut cmd,
+            "/sys/class/dmi/id/product_uuid",
+            "/sys/class/dmi/id/product_uuid",
+        );
+
         // Working directory
         cmd.arg("-w").arg("/data");
 
@@ -215,7 +224,7 @@ impl ContainerdRuntime {
         let mut perms = fs::metadata(&dir)
             .map_err(|e| AgentError::ContainerError(format!("Failed to stat console dir: {}", e)))?
             .permissions();
-        perms.set_mode(0o700);
+        perms.set_mode(0o755);
         fs::set_permissions(&dir, perms).map_err(|e| {
             AgentError::ContainerError(format!(
                 "Failed to set console directory permissions: {}",
@@ -229,6 +238,16 @@ impl ContainerdRuntime {
 
         create_fifo(&fifo_path).map_err(|e| {
             AgentError::ContainerError(format!("Failed to create console FIFO: {}", e))
+        })?;
+        let mut fifo_perms = fs::metadata(&fifo_path)
+            .map_err(|e| AgentError::ContainerError(format!("Failed to stat console FIFO: {}", e)))?
+            .permissions();
+        fifo_perms.set_mode(0o666);
+        fs::set_permissions(&fifo_path, fifo_perms).map_err(|e| {
+            AgentError::ContainerError(format!(
+                "Failed to set console FIFO permissions: {}",
+                e
+            ))
         })?;
 
         Ok(ConsoleFifo {
@@ -768,6 +787,26 @@ impl ContainerdRuntime {
         }
     }
 
+    /// Check if a container is running
+    pub async fn is_container_running(&self, container_id: &str) -> AgentResult<bool> {
+        let output = Command::new("nerdctl")
+            .arg("--namespace")
+            .arg(&self.namespace)
+            .arg("inspect")
+            .arg(container_id)
+            .arg("--format")
+            .arg("{{.State.Running}}")
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+        Ok(state == "true")
+    }
+
     /// Spawn a process to stream container logs (stdout/stderr)
     /// Returns a handle to the log streaming process
     pub async fn spawn_log_stream(&self, container_id: &str) -> AgentResult<tokio::process::Child> {
@@ -798,6 +837,13 @@ fn create_fifo(path: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn add_readonly_mount(cmd: &mut Command, host_path: &str, container_path: &str) {
+    if Path::new(host_path).exists() {
+        cmd.arg("-v")
+            .arg(format!("{}:{}:ro", host_path, container_path));
+    }
 }
 
 fn shell_quote(input: &str) -> String {

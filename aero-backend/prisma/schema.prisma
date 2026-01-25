@@ -99,6 +99,39 @@ model Node {
   deploymentTokens DeploymentToken[]
   metrics    NodeMetrics[]
   alerts     Alert[]
+  ipPools    IpPool[]
+}
+
+model IpPool {
+  id          String   @id @default(cuid())
+  nodeId      String
+  node        Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  networkName String
+  cidr        String
+  gateway     String?
+  startIp     String?
+  endIp       String?
+  reserved    Json     @default("[]") // array of IP strings
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  allocations IpAllocation[]
+
+  @@unique([nodeId, networkName])
+}
+
+model IpAllocation {
+  id         String   @id @default(cuid())
+  poolId     String
+  pool       IpPool   @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  serverId   String?  @unique
+  server     Server?  @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  ip         String
+  createdAt  DateTime @default(now())
+  releasedAt DateTime?
+
+  @@unique([poolId, ip])
+  @@index([serverId])
 }
 
 model DeploymentToken {
@@ -188,6 +221,7 @@ model Server {
   backups        Backup[]
   scheduledTasks ScheduledTask[]
   alerts         Alert[]
+  ipAllocation   IpAllocation?
 }
 
 model Backup {

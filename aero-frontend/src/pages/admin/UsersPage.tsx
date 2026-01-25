@@ -1,8 +1,10 @@
+import AdminTabs from '../../components/admin/AdminTabs';
 import EmptyState from '../../components/shared/EmptyState';
 
 function UsersPage() {
   return (
     <div className="space-y-4">
+      <AdminTabs />
       <h1 className="text-2xl font-semibold text-slate-50">User Management</h1>
       <EmptyState
         title="No users loaded"

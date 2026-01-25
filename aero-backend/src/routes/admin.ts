@@ -1,9 +1,26 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
+import { summarizePool } from '../utils/ipam';
 
 export async function adminRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
   const authenticate = (app as any).authenticate;
+  const isAdminUser = async (userId: string) => {
+    const userRoles = await prisma.role.findMany({
+      where: {
+        users: {
+          some: { id: userId },
+        },
+      },
+    });
+
+    const permissions = userRoles.flatMap((role) => role.permissions);
+    if (permissions.includes('*') || permissions.includes('admin.read')) {
+      return true;
+    }
+
+    return userRoles.some((role) => role.name.toLowerCase() === 'administrator');
+  };
 
   // Get system-wide stats
   app.get(
@@ -355,6 +372,216 @@ export async function adminRoutes(app: FastifyInstance) {
         },
         timestamp: new Date().toISOString(),
       });
+    }
+  );
+
+  // IPAM: list pools
+  app.get(
+    '/ip-pools',
+    { preHandler: authenticate },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = (request as any).user;
+
+      if (!(await isAdminUser(user.userId))) {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      const pools = await prisma.ipPool.findMany({
+        include: {
+          node: true,
+          allocations: {
+            where: { releasedAt: null },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const data = pools.map((pool) => {
+        const summary = summarizePool(pool);
+        const usedCount = pool.allocations.length;
+        const availableCount = Math.max(
+          0,
+          summary.total - summary.reservedCount - usedCount
+        );
+        return {
+          id: pool.id,
+          nodeId: pool.nodeId,
+          nodeName: pool.node.name,
+          networkName: pool.networkName,
+          cidr: pool.cidr,
+          gateway: pool.gateway,
+          startIp: pool.startIp,
+          endIp: pool.endIp,
+          reserved: pool.reserved,
+          rangeStart: summary.rangeStart,
+          rangeEnd: summary.rangeEnd,
+          total: summary.total,
+          reservedCount: summary.reservedCount,
+          usedCount,
+          availableCount,
+          createdAt: pool.createdAt,
+          updatedAt: pool.updatedAt,
+        };
+      });
+
+      reply.send({ success: true, data });
+    }
+  );
+
+  // IPAM: create pool
+  app.post(
+    '/ip-pools',
+    { preHandler: authenticate },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = (request as any).user;
+
+      if (!(await isAdminUser(user.userId))) {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      const {
+        nodeId,
+        networkName,
+        cidr,
+        gateway,
+        startIp,
+        endIp,
+        reserved,
+      } = request.body as {
+        nodeId: string;
+        networkName: string;
+        cidr: string;
+        gateway?: string;
+        startIp?: string;
+        endIp?: string;
+        reserved?: string[];
+      };
+
+      if (!nodeId || !networkName || !cidr) {
+        return reply.status(400).send({ error: 'nodeId, networkName, and cidr are required' });
+      }
+
+      const node = await prisma.node.findUnique({ where: { id: nodeId } });
+      if (!node) {
+        return reply.status(404).send({ error: 'Node not found' });
+      }
+
+      try {
+        summarizePool({
+          cidr,
+          startIp: startIp || null,
+          endIp: endIp || null,
+          gateway: gateway || null,
+          reserved: reserved || [],
+        });
+      } catch (error: any) {
+        return reply.status(400).send({ error: error.message });
+      }
+
+      const pool = await prisma.ipPool.create({
+        data: {
+          nodeId,
+          networkName,
+          cidr,
+          gateway: gateway || null,
+          startIp: startIp || null,
+          endIp: endIp || null,
+          reserved: reserved || [],
+        },
+      });
+
+      reply.status(201).send({ success: true, data: pool });
+    }
+  );
+
+  // IPAM: update pool
+  app.put(
+    '/ip-pools/:poolId',
+    { preHandler: authenticate },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = (request as any).user;
+
+      if (!(await isAdminUser(user.userId))) {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      const { poolId } = request.params as { poolId: string };
+
+      const pool = await prisma.ipPool.findUnique({
+        where: { id: poolId },
+      });
+
+      if (!pool) {
+        return reply.status(404).send({ error: 'IP pool not found' });
+      }
+
+      const {
+        cidr,
+        gateway,
+        startIp,
+        endIp,
+        reserved,
+      } = request.body as {
+        cidr?: string;
+        gateway?: string | null;
+        startIp?: string | null;
+        endIp?: string | null;
+        reserved?: string[];
+      };
+
+      try {
+        summarizePool({
+          cidr: cidr ?? pool.cidr,
+          startIp: startIp ?? pool.startIp,
+          endIp: endIp ?? pool.endIp,
+          gateway: gateway ?? pool.gateway,
+          reserved: reserved ?? pool.reserved,
+        });
+      } catch (error: any) {
+        return reply.status(400).send({ error: error.message });
+      }
+
+      const updated = await prisma.ipPool.update({
+        where: { id: poolId },
+        data: {
+          cidr: cidr ?? pool.cidr,
+          gateway: gateway ?? pool.gateway,
+          startIp: startIp ?? pool.startIp,
+          endIp: endIp ?? pool.endIp,
+          reserved: reserved ?? pool.reserved,
+        },
+      });
+
+      reply.send({ success: true, data: updated });
+    }
+  );
+
+  // IPAM: delete pool
+  app.delete(
+    '/ip-pools/:poolId',
+    { preHandler: authenticate },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = (request as any).user;
+
+      if (!(await isAdminUser(user.userId))) {
+        return reply.status(403).send({ error: 'Admin access required' });
+      }
+
+      const { poolId } = request.params as { poolId: string };
+
+      const activeAllocations = await prisma.ipAllocation.count({
+        where: { poolId, releasedAt: null },
+      });
+
+      if (activeAllocations > 0) {
+        return reply.status(409).send({
+          error: 'Pool has active allocations',
+        });
+      }
+
+      await prisma.ipPool.delete({ where: { id: poolId } });
+
+      reply.send({ success: true });
     }
   );
 }

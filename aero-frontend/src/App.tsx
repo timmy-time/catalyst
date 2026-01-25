@@ -9,8 +9,6 @@ import RegisterPage from './pages/auth/RegisterPage';
 import DashboardPage from './pages/dashboard/DashboardPage';
 import ServersPage from './pages/servers/ServersPage';
 import ServerDetailsPage from './pages/servers/ServerDetailsPage';
-import ServerConsolePage from './pages/servers/ServerConsolePage';
-import ServerFilesPage from './pages/servers/ServerFilesPage';
 import NodesPage from './pages/nodes/NodesPage';
 import TemplatesPage from './pages/templates/TemplatesPage';
 import TasksPage from './pages/tasks/TasksPage';
@@ -39,9 +37,7 @@ function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="servers" element={<ServersPage />} />
-          <Route path="servers/:serverId" element={<ServerDetailsPage />} />
-          <Route path="servers/:serverId/console" element={<ServerConsolePage />} />
-          <Route path="servers/:serverId/files" element={<ServerFilesPage />} />
+          <Route path="servers/:serverId/:tab?" element={<ServerDetailsPage />} />
           <Route path="nodes" element={<NodesPage />} />
           <Route path="templates" element={<TemplatesPage />} />
           <Route path="tasks" element={<TasksPage />} />

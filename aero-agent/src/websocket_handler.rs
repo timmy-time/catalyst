@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::System;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -234,13 +234,17 @@ impl WebSocketHandler {
                 let server_uuid = msg["serverUuid"]
                     .as_str()
                     .ok_or_else(|| AgentError::InvalidRequest("Missing serverUuid".to_string()))?;
-                self.stop_server(server_uuid).await?;
+                let (stop_command, send_signal) = Self::extract_stop_settings(&msg);
+                self.stop_server_with_settings(server_uuid, stop_command.as_deref(), send_signal.as_deref())
+                    .await?;
             }
             Some("restart_server") => {
                 let server_uuid = msg["serverUuid"]
                     .as_str()
                     .ok_or_else(|| AgentError::InvalidRequest("Missing serverUuid".to_string()))?;
-                self.restart_server(server_uuid).await?;
+                let (stop_command, send_signal) = Self::extract_stop_settings(&msg);
+                self.restart_server(server_uuid, stop_command.as_deref(), send_signal.as_deref())
+                    .await?;
             }
             Some("console_input") => self.handle_console_input(&msg).await?,
             Some("execute_command") => self.execute_command(&msg).await?,
@@ -271,10 +275,10 @@ impl WebSocketHandler {
         match action {
             "install" => self.install_server(msg).await?,
             "start" => self.start_server(server_id).await?,
-            "stop" => self.stop_server(server_id).await?,
+            "stop" => self.stop_server_with_settings(server_id, None, None).await?,
             "kill" => self.kill_server(server_id).await?,
             "restart" => {
-                self.stop_server(server_id).await?;
+                self.stop_server_with_settings(server_id, None, None).await?;
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 self.start_server(server_id).await?;
             }
@@ -604,6 +608,14 @@ impl WebSocketHandler {
             .map(|percent| std::cmp::max(256, memory_mb.saturating_mul(percent) / 100))
             .unwrap_or(memory_mb);
         env_map.insert("MEMORY".to_string(), effective_memory_mb.to_string());
+        let memory_xms_mb = env_map
+            .get("MEMORY_XMS_PERCENT")
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| (1..=100).contains(value))
+            .map(|percent| std::cmp::max(256, effective_memory_mb.saturating_mul(percent) / 100))
+            .unwrap_or(std::cmp::max(256, effective_memory_mb / 2));
+        let clamped_xms_mb = std::cmp::min(memory_xms_mb, effective_memory_mb);
+        env_map.insert("MEMORY_XMS".to_string(), clamped_xms_mb.to_string());
         env_map.insert("PORT".to_string(), primary_port.to_string());
 
         // Replace all {{VARIABLE}} placeholders
@@ -620,30 +632,29 @@ impl WebSocketHandler {
         let container_exists = self.runtime.container_exists(server_uuid).await;
 
         if container_exists {
-            info!("Existing container found, removing it before creating new one...");
-            // Remove the old container (could be from install or previous start)
-            if let Err(e) = self.runtime.remove_container(server_uuid).await {
-                warn!("Failed to remove existing container: {}", e);
-                // Continue anyway - maybe it's already gone
+            info!("Existing container found, starting without recreation...");
+            let is_running = self.runtime.is_container_running(server_uuid).await?;
+            if !is_running {
+                self.runtime.start_container(server_uuid).await?;
             }
+        } else {
+            info!("Creating new container...");
+            // Create and start container
+            self.runtime
+                .create_container(
+                    server_uuid,
+                    docker_image,
+                    &final_startup_command,
+                    &env_map,
+                    memory_mb,
+                    cpu_cores,
+                    &server_dir,
+                    primary_port,
+                    network_mode,
+                    network_ip.as_deref(),
+                )
+                .await?;
         }
-
-        info!("Creating new container...");
-        // Create and start container
-        self.runtime
-            .create_container(
-                server_uuid,
-                docker_image,
-                &final_startup_command,
-                &env_map,
-                memory_mb,
-                cpu_cores,
-                &server_dir,
-                primary_port,
-                network_mode,
-                network_ip.as_deref(),
-            )
-            .await?;
 
         // Spawn log streamer
         self.spawn_log_streamer(server_id.to_string(), server_uuid.to_string());
@@ -672,10 +683,37 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    async fn stop_server(&self, server_id: &str) -> AgentResult<()> {
+    async fn stop_server_with_settings(
+        &self,
+        server_id: &str,
+        stop_command: Option<&str>,
+        send_signal_to: Option<&str>,
+    ) -> AgentResult<()> {
         info!("Stopping server: {}", server_id);
 
-        self.runtime.stop_container(server_id, 30).await?;
+        if let Some(command) = stop_command {
+            let trimmed = command.trim();
+            if !trimmed.is_empty() {
+                let mut input = trimmed.to_string();
+                if !input.ends_with('\n') {
+                    input.push('\n');
+                }
+                if let Err(err) = self.runtime.send_input(server_id, &input).await {
+                    warn!("Failed to send stop command to {}: {}", server_id, err);
+                } else if self.wait_for_exit(server_id, 10).await? {
+                    self.emit_server_state_update(server_id, "stopped", None)
+                        .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let signal = send_signal_to.unwrap_or("SIGTERM").to_uppercase();
+        if signal == "SIGKILL" {
+            self.runtime.kill_container(server_id, "SIGKILL").await?;
+        } else {
+            self.runtime.stop_container(server_id, 15).await?;
+        }
 
         self.emit_server_state_update(server_id, "stopped", None)
             .await?;
@@ -694,13 +732,16 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    async fn restart_server(&self, server_id: &str) -> AgentResult<()> {
+    async fn restart_server(
+        &self,
+        server_id: &str,
+        stop_command: Option<&str>,
+        send_signal_to: Option<&str>,
+    ) -> AgentResult<()> {
         info!("Restarting server: {}", server_id);
 
         // First stop the server
-        self.runtime.stop_container(server_id, 30).await?;
-
-        self.emit_server_state_update(server_id, "stopped", None)
+        self.stop_server_with_settings(server_id, stop_command, send_signal_to)
             .await?;
 
         // Small delay to ensure clean shutdown
@@ -719,6 +760,32 @@ impl WebSocketHandler {
             .await?;
 
         Ok(())
+    }
+
+    async fn wait_for_exit(&self, server_id: &str, timeout_secs: u64) -> AgentResult<bool> {
+        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+        loop {
+            if !self.runtime.is_container_running(server_id).await? {
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    fn extract_stop_settings(msg: &Value) -> (Option<String>, Option<String>) {
+        let template = msg.get("template").and_then(|value| value.as_object());
+        let stop_command = template
+            .and_then(|value| value.get("stopCommand"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+        let send_signal_to = template
+            .and_then(|value| value.get("sendSignalTo"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+        (stop_command, send_signal_to)
     }
 
     async fn execute_command(&self, msg: &Value) -> AgentResult<()> {
@@ -1229,6 +1296,12 @@ impl WebSocketHandler {
                 } else {
                     1
                 };
+
+                // Ignore clean/expected stops to avoid marking them as crashes.
+                // 0 = normal exit, 143 = SIGTERM (typical stop signal).
+                if exit_code == 0 || exit_code == 143 {
+                    continue;
+                }
 
                 // Send crashed state update
                 let server_id = extract_server_id(&container);

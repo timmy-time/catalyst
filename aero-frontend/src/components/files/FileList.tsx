@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FileEntry } from '../../types/file';
-import { formatBytes } from '../../utils/formatters';
+import { formatBytes, formatFileMode } from '../../utils/formatters';
 import EmptyState from '../shared/EmptyState';
 import FileContextMenu from './FileContextMenu';
 
@@ -15,6 +15,7 @@ type Props = {
   onDelete: (entry: FileEntry) => void;
   onCompress: (entry: FileEntry) => void;
   onDecompress: (entry: FileEntry) => void;
+  onPermissions: (entry: FileEntry) => void;
 };
 
 const isArchive = (name: string) =>
@@ -31,6 +32,7 @@ function FileList({
   onDelete,
   onCompress,
   onDecompress,
+  onPermissions,
 }: Props) {
   const [contextMenuEntry, setContextMenuEntry] = useState<FileEntry | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
@@ -106,10 +108,11 @@ function FileList({
 
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[520px] divide-y divide-slate-800">
-        <div className="grid grid-cols-[24px,1fr,120px,160px,36px] gap-3 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500">
+      <div className="min-w-[620px] divide-y divide-slate-800">
+        <div className="grid grid-cols-[24px,1fr,96px,120px,160px,36px] gap-3 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500">
           <span />
           <span>Name</span>
+          <span>Mode</span>
           <span>Size</span>
           <span>Modified</span>
           <span className="text-right">Actions</span>
@@ -119,7 +122,7 @@ function FileList({
           return (
             <div
               key={entry.path}
-              className={`grid grid-cols-[24px,1fr,120px,160px,36px] items-center gap-3 px-4 py-2 text-sm ${
+              className={`grid grid-cols-[24px,1fr,96px,120px,160px,36px] items-center gap-3 px-4 py-2 text-sm ${
                 selected ? 'bg-slate-900/70' : 'hover:bg-slate-900/50'
               }`}
               onContextMenu={(event) => {
@@ -149,6 +152,7 @@ function FileList({
                 </span>
                 <span className="truncate">{entry.name}</span>
               </button>
+              <span className="text-xs text-slate-400">{formatFileMode(entry.mode)}</span>
               <span className="text-xs text-slate-400">
                 {entry.isDirectory ? '-' : formatBytes(entry.size)}
               </span>
@@ -164,6 +168,7 @@ function FileList({
                   onDecompress={
                     !entry.isDirectory && isArchive(entry.name) ? () => onDecompress(entry) : undefined
                   }
+                  onPermissions={() => onPermissions(entry)}
                   onDelete={() => onDelete(entry)}
                 />
               </div>
@@ -184,6 +189,7 @@ function FileList({
               ? () => onDecompress(contextMenuEntry)
               : undefined
           }
+          onPermissions={() => onPermissions(contextMenuEntry)}
           onDelete={() => onDelete(contextMenuEntry)}
           contextPosition={contextMenuPosition}
           onRequestClose={closeContextMenu}

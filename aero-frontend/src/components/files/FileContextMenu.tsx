@@ -8,6 +8,7 @@ type Props = {
   onDelete: () => void;
   onCompress?: () => void;
   onDecompress?: () => void;
+  onPermissions?: () => void;
   contextPosition?: { x: number; y: number } | null;
   onRequestClose?: () => void;
 };
@@ -19,6 +20,7 @@ function FileContextMenu({
   onDelete,
   onCompress,
   onDecompress,
+  onPermissions,
   contextPosition,
   onRequestClose,
 }: Props) {
@@ -74,6 +76,15 @@ function FileContextMenu({
             Decompress
           </button>
         ) : null}
+        {onPermissions ? (
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-md px-2 py-1 text-slate-200 hover:bg-slate-900"
+            onClick={wrap(onPermissions)}
+          >
+            Permissions
+          </button>
+        ) : null}
         <button
           type="button"
           className="flex w-full items-center justify-between rounded-md px-2 py-1 text-rose-200 hover:bg-rose-950/40"
@@ -83,7 +94,7 @@ function FileContextMenu({
         </button>
       </div>
     ),
-    [entry.isDirectory, onCompress, onDecompress, onDelete, onDownload, onOpen],
+    [entry.isDirectory, onCompress, onDecompress, onDelete, onDownload, onOpen, onPermissions],
   );
 
   useLayoutEffect(() => {

@@ -1,8 +1,14 @@
 import axios from 'axios';
 import { useAuthStore } from '../../stores/authStore';
 
+const normalizeBaseUrl = (value?: string) => {
+  if (!value) return '';
+  if (value === '/api') return '';
+  return value.replace(/\/api\/?$/, '');
+};
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+  baseURL: normalizeBaseUrl(import.meta.env.VITE_API_URL) || '',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

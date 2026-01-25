@@ -13,4 +13,11 @@ export const nodesApi = {
     const { data } = await apiClient.get<ApiResponse<NodeInfo[]>>('/api/nodes');
     return data.data || [];
   },
+  availableIps: async (nodeId: string, networkName: string, limit = 200) => {
+    const { data } = await apiClient.get<ApiResponse<string[]>>(
+      `/api/nodes/${nodeId}/ip-availability`,
+      { params: { networkName, limit } },
+    );
+    return data.data || [];
+  },
 };
