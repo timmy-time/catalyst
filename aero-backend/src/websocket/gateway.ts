@@ -22,14 +22,19 @@ interface ClientConnection {
   authenticated: boolean;
 }
 
+type PendingAgentRequest = {
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+  kind: "json" | "binary";
+  chunks?: Buffer[];
+};
+
 export class WebSocketGateway {
   private agents = new Map<string, ConnectedAgent>();
   private clients = new Map<string, ClientConnection>();
   private logger: pino.Logger;
-  private pendingAgentRequests = new Map<
-    string,
-    { resolve: (value: any) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
-  >();
+  private pendingAgentRequests = new Map<string, PendingAgentRequest>();
 
   constructor(private prisma: PrismaClient, logger: pino.Logger) {
     this.logger = logger.child({ component: "WebSocketGateway" });
@@ -153,10 +158,45 @@ export class WebSocketGateway {
           : undefined;
         if (pending) {
           clearTimeout(pending.timeout);
-          pending.resolve(message);
+          if (message.success === false) {
+            pending.reject(new Error(message.error || "Backup download failed"));
+          } else {
+            pending.resolve(message);
+          }
           this.pendingAgentRequests.delete(message.requestId);
         } else {
           this.logger.warn({ requestId: message.requestId }, "No pending download request");
+        }
+        return;
+      }
+
+      if (message.type === "backup_download_chunk") {
+        const pending = message.requestId
+          ? this.pendingAgentRequests.get(message.requestId)
+          : undefined;
+        if (!pending || pending.kind !== "binary") {
+          this.logger.warn({ requestId: message.requestId }, "No pending chunk request");
+          return;
+        }
+        if (message.error) {
+          clearTimeout(pending.timeout);
+          this.logger.error(
+            { requestId: message.requestId, error: message.error },
+            "Agent download chunk error",
+          );
+          pending.reject(new Error(message.error));
+          this.pendingAgentRequests.delete(message.requestId);
+          return;
+        }
+        if (message.data) {
+          const buffer = Buffer.from(message.data, "base64");
+          pending.chunks?.push(buffer);
+        }
+        if (message.done) {
+          clearTimeout(pending.timeout);
+          const payload = Buffer.concat(pending.chunks ?? []);
+          pending.resolve(payload);
+          this.pendingAgentRequests.delete(message.requestId);
         }
         return;
       }
@@ -397,7 +437,34 @@ export class WebSocketGateway {
         this.pendingAgentRequests.delete(requestId);
         reject(new Error("Agent request timed out"));
       }, timeoutMs);
-      this.pendingAgentRequests.set(requestId, { resolve, reject, timeout });
+      this.pendingAgentRequests.set(requestId, { resolve, reject, timeout, kind: "json" });
+    });
+
+    agent.socket.socket.send(JSON.stringify(payload));
+    return response;
+  }
+
+  async requestBinaryFromAgent(nodeId: string, message: any, timeoutMs = 60000): Promise<Buffer> {
+    const agent = this.agents.get(nodeId);
+    if (!agent || !agent.authenticated || agent.socket.socket.readyState !== 1) {
+      throw new Error(`Agent ${nodeId} not connected`);
+    }
+
+    const requestId = crypto.randomUUID();
+    const payload = { ...message, requestId };
+
+    const response = new Promise<Buffer>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingAgentRequests.delete(requestId);
+        reject(new Error("Agent request timed out"));
+      }, timeoutMs);
+      this.pendingAgentRequests.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        kind: "binary",
+        chunks: [],
+      });
     });
 
     agent.socket.socket.send(JSON.stringify(payload));

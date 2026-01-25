@@ -326,17 +326,16 @@ export async function backupRoutes(app: FastifyInstance) {
 
         const gateway = (app as any).wsGateway;
         try {
-          const response = await gateway.requestFromAgent(server.nodeId, {
+          const buffer = await gateway.requestBinaryFromAgent(server.nodeId, {
             type: "download_backup",
             serverId: server.id,
             backupPath: backup.path,
           });
 
-          if (!response?.data) {
+          if (!buffer?.length) {
             return reply.status(404).send({ error: "Backup file not found on node" });
           }
 
-          const buffer = Buffer.from(response.data, "base64");
           reply.header("Content-Type", "application/gzip");
           reply.header(
             "Content-Disposition",
@@ -344,6 +343,7 @@ export async function backupRoutes(app: FastifyInstance) {
           );
           return reply.send(buffer);
         } catch (error: any) {
+          request.log.error({ err: error, serverId, backupId }, "Backup download failed");
           return reply.status(500).send({ error: error?.message || "Failed to download backup" });
         }
       }

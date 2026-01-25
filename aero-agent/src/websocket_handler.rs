@@ -671,11 +671,11 @@ impl WebSocketHandler {
         let backup_file = PathBuf::from(backup_path);
         if !backup_file.exists() {
             let event = json!({
-                "type": "backup_download_response",
+                "type": "backup_download_chunk",
                 "requestId": request_id,
                 "serverId": server_id,
-                "success": false,
                 "error": "Backup file not found",
+                "done": true,
             });
             let mut w = write.lock().await;
             w.send(Message::Text(event.to_string()))
@@ -684,18 +684,69 @@ impl WebSocketHandler {
             return Ok(());
         }
 
-        let data = tokio::fs::read(&backup_file).await?;
-        let event = json!({
-            "type": "backup_download_response",
-            "requestId": request_id,
-            "serverId": server_id,
-            "success": true,
-            "data": base64::engine::general_purpose::STANDARD.encode(data),
-        });
+        let mut file = match tokio::fs::File::open(&backup_file).await {
+            Ok(file) => file,
+            Err(err) => {
+                let event = json!({
+                    "type": "backup_download_chunk",
+                    "requestId": request_id,
+                    "serverId": server_id,
+                    "error": format!("Failed to open backup file: {}", err),
+                    "done": true,
+                });
+                let mut w = write.lock().await;
+                w.send(Message::Text(event.to_string()))
+                    .await
+                    .map_err(|e| AgentError::NetworkError(e.to_string()))?;
+                return Ok(());
+            }
+        };
+        let mut buffer = vec![0u8; 256 * 1024];
         let mut w = write.lock().await;
-        w.send(Message::Text(event.to_string()))
-            .await
-            .map_err(|e| AgentError::NetworkError(e.to_string()))?;
+
+        loop {
+            let read = match file.read(&mut buffer).await {
+                Ok(read) => read,
+                Err(err) => {
+                    let event = json!({
+                        "type": "backup_download_chunk",
+                        "requestId": request_id,
+                        "serverId": server_id,
+                        "error": format!("Failed to read backup file: {}", err),
+                        "done": true,
+                    });
+                    w.send(Message::Text(event.to_string()))
+                        .await
+                        .map_err(|e| AgentError::NetworkError(e.to_string()))?;
+                    break;
+                }
+            };
+            if read == 0 {
+                let done_event = json!({
+                    "type": "backup_download_chunk",
+                    "requestId": request_id,
+                    "serverId": server_id,
+                    "done": true,
+                });
+                w.send(Message::Text(done_event.to_string()))
+                    .await
+                    .map_err(|e| AgentError::NetworkError(e.to_string()))?;
+                break;
+            }
+
+            let chunk = base64::engine::general_purpose::STANDARD.encode(&buffer[..read]);
+            let event = json!({
+                "type": "backup_download_chunk",
+                "requestId": request_id,
+                "serverId": server_id,
+                "data": chunk,
+                "done": false,
+            });
+            w.send(Message::Text(event.to_string()))
+                .await
+                .map_err(|e| AgentError::NetworkError(e.to_string()))?;
+        }
+
         Ok(())
     }
 
