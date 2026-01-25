@@ -1,0 +1,19 @@
+import { Link } from 'react-router-dom';
+
+function NotFoundPage() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 text-center text-slate-100">
+      <p className="text-sm uppercase tracking-widest text-slate-500">404</p>
+      <h1 className="mt-2 text-3xl font-semibold">Page not found</h1>
+      <p className="mt-2 text-sm text-slate-400">The page you are looking for does not exist.</p>
+      <Link
+        to="/dashboard"
+        className="mt-6 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-sky-500"
+      >
+        Go to dashboard
+      </Link>
+    </div>
+  );
+}
+
+export default NotFoundPage;
