@@ -428,6 +428,8 @@ export async function adminRoutes(app: FastifyInstance) {
     }
   );
 
+  // Node interface listing (admin)
+
   // IPAM: create pool
   app.post(
     '/ip-pools',

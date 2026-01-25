@@ -14,38 +14,42 @@ When the agent starts, it automatically:
 - Downloads and installs `nerdctl` from GitHub releases
 - Verifies installation and readiness
 
-### 2. **CNI Networking**
+-### 2. **CNI Networking**
 - Creates `/etc/cni/net.d/` directory structure
 - Detects primary network interface automatically
-- Generates `mc-lan.conflist` for macvlan networking
-- Configures DHCP IPAM for dynamic IP allocation
+- Generates `mc-lan-static.conflist` for macvlan networking with host-local IPAM
 
 ### 3. **CNI Plugins**
 - Downloads CNI plugins bundle from GitHub
 - Extracts to `/opt/cni/bin/`
 - Includes: bridge, macvlan, dhcp, host-local, etc.
 
-### 4. **DHCP Daemon**
-- Starts CNI DHCP daemon for container IP management
-- Creates systemd service (if systemd available)
-- Enables auto-start on system boot
-- Falls back to manual daemon start if needed
-
 ## Network Configuration
 
-The agent creates a **macvlan network** with the following characteristics:
+The agent creates a **macvlan network with host-local IPAM**:
 
 ```json
 {
   "cniVersion": "1.0.0",
-  "name": "mc-lan",
+  "name": "mc-lan-static",
   "plugins": [
     {
       "type": "macvlan",
       "master": "<detected-interface>",
       "mode": "bridge",
       "ipam": {
-        "type": "dhcp"
+        "type": "host-local",
+        "ranges": [[
+          {
+            "subnet": "<detected-cidr>",
+            "rangeStart": "<usable-start>",
+            "rangeEnd": "<usable-end>",
+            "gateway": "<detected-gateway>"
+          }
+        ]],
+        "routes": [
+          { "dst": "0.0.0.0/0" }
+        ]
       }
     }
   ]
@@ -65,7 +69,7 @@ Containers can use different networking modes:
 | Mode | Description | IP Range | Use Case |
 |------|-------------|----------|----------|
 | `bridge` | Isolated network | 10.4.0.x | Testing, development |
-| `mc-lan` | **LAN network with DHCP** | **192.168.1.x** | **Production game servers** |
+| `mc-lan-static` | **LAN network with static host-local IPAM** | **192.168.1.x** | **Production game servers** |
 | `host` | Host networking | Host IP | Low latency required |
 
 ## Installation on Fresh Node
@@ -108,31 +112,10 @@ On first run, the agent will:
 ✓ Detected package manager: apt
 ✓ Container runtime installed
 ✓ Detected network interface: enp34s0
-✓ Created CNI network configuration at /etc/cni/net.d/mc-lan.conflist
+✓ Created CNI network configuration at /etc/cni/net.d/mc-lan-static.conflist
 ✓ CNI plugins installed
-✓ CNI DHCP systemd service enabled and started
 ✅ System initialization complete!
 ```
-
-## Systemd Service
-
-The agent creates `/etc/systemd/system/cni-dhcp.service`:
-
-```ini
-[Unit]
-Description=CNI DHCP Daemon for Container Networking
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/opt/cni/bin/dhcp daemon
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-This ensures the DHCP daemon starts automatically on boot.
 
 ## Testing
 
@@ -144,29 +127,22 @@ Use the provided test script to verify setup:
 
 This checks:
 - ✓ nerdctl installation
-- ✓ CNI plugins present
-- ✓ Network configuration created
-- ✓ DHCP daemon running
-- ✓ Systemd service enabled
+- ✓ CNI plugins present (bridge, macvlan, host-local, etc.)
+- ✓ macvlan static network config created at `/etc/cni/net.d/mc-lan-static.conflist`
 
 ## Troubleshooting
 
-### DHCP Daemon Not Starting
+### Static Network Not Configured
 
-Check if the daemon is running:
+1. Verify the macvlan static config exists:
 ```bash
-ps aux | grep "dhcp daemon"
+cat /etc/cni/net.d/mc-lan-static.conflist
 ```
-
-Check systemd service status:
+2. Re-run the agent if the file is missing:
 ```bash
-systemctl status cni-dhcp.service
+sudo /usr/local/bin/aero-agent
 ```
-
-Manually start if needed:
-```bash
-/opt/cni/bin/dhcp daemon &
-```
+3. Ensure the detected interface is still available (see below).
 
 ### Network Interface Detection Failed
 
@@ -192,10 +168,9 @@ curl -fsSL https://github.com/containernetworking/plugins/releases/download/v1.4
 
 ### Containers Not Getting IPs
 
-1. Verify DHCP daemon is running
-2. Check network config: `cat /etc/cni/net.d/mc-lan.conflist`
-3. Test container creation: `nerdctl run --network mc-lan alpine ip addr`
-4. Check DHCP socket: `ls -l /run/cni/dhcp.sock`
+1. Confirm the static macvlan network config is present: `cat /etc/cni/net.d/mc-lan-static.conflist`
+2. Ensure the detected interface IP is in the same CIDR as the configured subnet
+3. Test container creation: `nerdctl run --network mc-lan-static alpine ip addr`
 
 ## Production Deployment
 
@@ -228,7 +203,7 @@ If running the agent itself in a container (not recommended for production):
 - Mount `/opt/cni/bin` as volume
 - Mount `/etc/cni/net.d` as volume
 - Use privileged mode for firewall configuration
-- Host networking for DHCP daemon
+- Host networking for macvlan traffic
 
 ## Security Considerations
 

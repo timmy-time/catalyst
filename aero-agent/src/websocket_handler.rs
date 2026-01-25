@@ -632,12 +632,41 @@ impl WebSocketHandler {
         let container_exists = self.runtime.container_exists(server_uuid).await;
 
         if container_exists {
-            info!("Existing container found, starting without recreation...");
-            let is_running = self.runtime.is_container_running(server_uuid).await?;
-            if !is_running {
-                self.runtime.start_container(server_uuid).await?;
+            let desired_ip = network_ip.as_deref();
+            let current_ip = self.runtime.get_container_ip(server_uuid).await.unwrap_or_default();
+            let needs_recreate = match desired_ip {
+                Some(ip) => !ip.is_empty() && current_ip != ip,
+                None => false,
+            };
+
+            if needs_recreate {
+                info!(
+                    "Recreating container to apply IP change ({} -> {})",
+                    current_ip,
+                    desired_ip.unwrap_or("unset")
+                );
+                if let Err(e) = self.runtime.remove_container(server_uuid).await {
+                    warn!("Failed to remove existing container: {}", e);
+                }
+            } else {
+                info!("Existing container found, starting without recreation...");
+                let is_running = self.runtime.is_container_running(server_uuid).await?;
+                if !is_running {
+                    self.runtime.start_container(server_uuid).await?;
+                }
+                // Spawn log streamer
+                self.spawn_log_streamer(server_id.to_string(), server_uuid.to_string());
+
+                // Emit state update
+                self.emit_server_state_update(server_id, "running", None)
+                    .await?;
+
+                info!("Server started successfully: {}", server_uuid);
+                return Ok(());
             }
-        } else {
+        }
+
+        {
             info!("Creating new container...");
             // Create and start container
             self.runtime
@@ -787,6 +816,7 @@ impl WebSocketHandler {
             .map(|value| value.to_string());
         (stop_command, send_signal_to)
     }
+
 
     async fn execute_command(&self, msg: &Value) -> AgentResult<()> {
         let server_id = msg["serverId"]

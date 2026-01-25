@@ -15,6 +15,27 @@ import {
   shouldUseIpam,
 } from "../utils/ipam";
 
+const buildConnectionInfo = (
+  server: any,
+  fallbackNode?: { publicAddress?: string }
+) => {
+  const assignedIp = server.primaryIp ?? null;
+  const nodeIp = fallbackNode?.publicAddress ?? server.node?.publicAddress ?? null;
+  const host = assignedIp || nodeIp || null;
+
+  return {
+    assignedIp,
+    nodeIp,
+    host,
+    port: server.primaryPort ?? null,
+  };
+};
+
+const withConnectionInfo = (server: any, fallbackNode?: { publicAddress?: string }) => ({
+  ...server,
+  connection: buildConnectionInfo(server, fallbackNode),
+});
+
 export async function serverRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
   const execFileAsync = promisify(execFile);
@@ -198,7 +219,7 @@ export async function serverRoutes(app: FastifyInstance) {
         });
       }
 
-      const desiredNetworkMode = networkMode || "mc-lan";
+      const desiredNetworkMode = networkMode || "mc-lan-static";
       const requestedIp =
         resolvedEnvironment?.AERO_NETWORK_IP &&
         String(resolvedEnvironment.AERO_NETWORK_IP).trim().length > 0
@@ -281,7 +302,10 @@ export async function serverRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.status(201).send({ success: true, data: server });
+      reply.status(201).send({
+        success: true,
+        data: withConnectionInfo(server, node),
+      });
     }
   );
 
@@ -310,7 +334,10 @@ export async function serverRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: servers });
+      reply.send({
+        success: true,
+        data: servers.map((server) => withConnectionInfo(server)),
+      });
     }
   );
 
@@ -345,7 +372,7 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: "Forbidden" });
       }
 
-      reply.send({ success: true, data: server });
+      reply.send({ success: true, data: withConnectionInfo(server) });
     }
   );
 

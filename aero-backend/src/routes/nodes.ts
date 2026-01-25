@@ -373,7 +373,7 @@ export async function nodeRoutes(app: FastifyInstance) {
     { onRequest: [app.authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { nodeId } = request.params as { nodeId: string };
-      const { networkName = "mc-lan", limit = "200" } = request.query as {
+      const { networkName = "mc-lan-static", limit = "200" } = request.query as {
         networkName?: string;
         limit?: string;
       };

@@ -143,7 +143,6 @@ export class WebSocketGateway {
   private async handleAgentMessage(nodeId: string, data: any) {
     try {
       const message = JSON.parse(data.toString());
-
       if (message.type === "heartbeat") {
         const agent = this.agents.get(nodeId);
         if (agent) {
@@ -495,6 +494,7 @@ export class WebSocketGateway {
       return false;
     }
   }
+
 
   // Handle server crash and auto-restart logic
   private async handleServerCrash(server: any, newCrashCount: number): Promise<void> {

@@ -45,19 +45,6 @@ check_file() {
     fi
 }
 
-check_daemon() {
-    local process=$1
-    local name=$2
-    
-    if pgrep -f "$process" > /dev/null; then
-        echo -e "  ${GREEN}✓${NC} $name is running (PID: $(pgrep -f "$process" | head -1))"
-        return 0
-    else
-        echo -e "  ${RED}✗${NC} $name NOT running"
-        return 1
-    fi
-}
-
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Pre-Setup Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -71,9 +58,7 @@ echo ""
 
 echo "Current State:"
 check_command "nerdctl" "nerdctl" || true
-check_file "/opt/cni/bin/dhcp" "CNI DHCP plugin" || true
-check_file "/etc/cni/net.d/mc-lan.conflist" "CNI network config" || true
-check_daemon "dhcp daemon" "DHCP daemon" || true
+check_file "/etc/cni/net.d/mc-lan-static.conflist" "CNI network config" || true
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -110,36 +95,15 @@ echo ""
 
 echo "Network Configuration:"
 ((TOTAL++))
-if check_file "/etc/cni/net.d/mc-lan.conflist" "macvlan network config"; then
+if check_file "/etc/cni/net.d/mc-lan-static.conflist" "macvlan static network config"; then
     ((PASS++))
     echo ""
     echo "  Network config content:"
-    cat /etc/cni/net.d/mc-lan.conflist | sed 's/^/    /'
+    cat /etc/cni/net.d/mc-lan-static.conflist | sed 's/^/    /'
 fi
 echo ""
 
-echo "DHCP Daemon:"
-((TOTAL++))
-if check_daemon "dhcp daemon" "CNI DHCP daemon"; then
-    ((PASS++))
-    echo "  Socket: /run/cni/dhcp.sock"
-    ls -l /run/cni/dhcp.sock 2>/dev/null | sed 's/^/    /' || true
-fi
 echo ""
-
-# Check systemd service if available
-if command -v systemctl &> /dev/null; then
-    echo "Systemd Service:"
-    ((TOTAL++))
-    if systemctl is-enabled cni-dhcp.service &> /dev/null; then
-        ((PASS++))
-        echo -e "  ${GREEN}✓${NC} cni-dhcp.service enabled"
-        systemctl status cni-dhcp.service --no-pager | head -5 | sed 's/^/    /'
-    else
-        echo -e "  ${YELLOW}⚠${NC} cni-dhcp.service not enabled (daemon running manually)"
-    fi
-    echo ""
-fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Summary"

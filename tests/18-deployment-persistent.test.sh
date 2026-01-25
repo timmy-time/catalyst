@@ -130,7 +130,7 @@ SERVER_DATA=$(cat <<SERVEREOF
   "allocatedMemoryMb": 2048,
   "allocatedCpuCores": 2,
   "primaryPort": $SERVER_PORT,
-  "networkMode": "mc-lan",
+  "networkMode": "mc-lan-static",
   "environment": {
     "MEMORY": "2048",
     "PORT": "$SERVER_PORT",

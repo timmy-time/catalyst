@@ -110,7 +110,7 @@ function ServerDetailsPage() {
   const nodeIp = isBridge
     ? server.node?.publicAddress ?? server.node?.hostname ?? 'n/a'
     : server.primaryIp ?? 'n/a';
-  const nodePort = isBridge ? server.primaryPort ?? 'n/a' : 'n/a';
+  const nodePort = server.primaryPort ?? 'n/a';
 
   return (
     <div className="space-y-4">

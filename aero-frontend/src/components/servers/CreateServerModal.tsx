@@ -17,7 +17,9 @@ function CreateServerModal() {
   const [cpu, setCpu] = useState('1');
   const [port, setPort] = useState('25565');
   const [environment, setEnvironment] = useState<Record<string, string>>({});
-  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan'>('mc-lan');
+  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan' | 'mc-lan-static'>(
+    'mc-lan-static',
+  );
   const [requestedIp, setRequestedIp] = useState('');
   const navigate = useNavigate();
 
@@ -44,7 +46,7 @@ function CreateServerModal() {
   useEffect(() => {
     setRequestedIp('');
     let active = true;
-    if (!nodeId || networkMode !== 'mc-lan') {
+    if (!nodeId || networkMode !== 'mc-lan-static') {
       setAvailableIps([]);
       setIpLoadError(null);
       return;
@@ -52,7 +54,7 @@ function CreateServerModal() {
 
     setIpLoadError(null);
     nodesApi
-      .availableIps(nodeId, 'mc-lan', 200)
+      .availableIps(nodeId, networkMode, 200)
       .then((ips) => {
         if (!active) return;
         setAvailableIps(ips);
@@ -73,7 +75,7 @@ function CreateServerModal() {
     mutationFn: async () => {
       // Create server first
       const networkEnv =
-        networkMode === 'mc-lan' && requestedIp.trim()
+        networkMode === 'mc-lan-static' && requestedIp.trim()
           ? { AERO_NETWORK_IP: requestedIp.trim() }
           : {};
 
@@ -109,7 +111,7 @@ function CreateServerModal() {
       setTemplateId('');
       setNodeId('');
       setEnvironment({});
-      setNetworkMode('mc-lan');
+      setNetworkMode('mc-lan-static');
       setRequestedIp('');
       if (server?.id) {
         navigate(`/servers/${server.id}/console`);
@@ -249,10 +251,11 @@ function CreateServerModal() {
                   }
                 >
                   <option value="bridge">Node IP (port mapping)</option>
-                  <option value="mc-lan">macvlan (IPAM)</option>
+                  <option value="mc-lan">macvlan (DHCP)</option>
+                  <option value="mc-lan-static">macvlan (static IPAM)</option>
                 </select>
               </label>
-              {networkMode === 'mc-lan' ? (
+              {networkMode === 'mc-lan-static' ? (
                 <div className="space-y-2">
                   <p className="text-xs text-slate-400">
                     Choose an IP from the node pool or leave auto-assign selected.

@@ -13,13 +13,6 @@ const parseReserved = (value: string) =>
     .filter(Boolean);
 
 function SystemPage() {
-  const queryClient = useQueryClient();
-  const { data: nodes = [] } = useNodes();
-  const { data: pools = [], isLoading } = useQuery({
-    queryKey: ['ip-pools'],
-    queryFn: adminApi.listIpPools,
-  });
-
   const [nodeId, setNodeId] = useState('');
   const [networkName, setNetworkName] = useState('mc-lan');
   const [cidr, setCidr] = useState('');
@@ -27,6 +20,14 @@ function SystemPage() {
   const [startIp, setStartIp] = useState('');
   const [endIp, setEndIp] = useState('');
   const [reserved, setReserved] = useState('');
+  const [interfaceName, setInterfaceName] = useState('');
+  const [networkMode, setNetworkMode] = useState<'dhcp' | 'static'>('static');
+  const queryClient = useQueryClient();
+  const { data: nodes = [] } = useNodes();
+  const { data: pools = [], isLoading } = useQuery({
+    queryKey: ['ip-pools'],
+    queryFn: adminApi.listIpPools,
+  });
 
   const canSubmit = useMemo(
     () => nodeId && networkName && cidr,
@@ -171,6 +172,7 @@ function SystemPage() {
           </button>
         </div>
       </div>
+
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {isLoading ? (
