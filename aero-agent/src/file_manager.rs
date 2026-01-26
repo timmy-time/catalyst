@@ -191,7 +191,7 @@ impl FileManager {
         &self,
         server_id: &str,
         path: &str,
-        archive: &[u8],
+        _archive: &[u8],
     ) -> AgentResult<()> {
         let full_path = self.resolve_path(server_id, path)?;
 

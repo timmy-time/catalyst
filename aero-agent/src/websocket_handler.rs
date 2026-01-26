@@ -164,7 +164,17 @@ impl WebSocketHandler {
                 let server_uuid = msg["serverUuid"].as_str().ok_or_else(|| {
                     AgentError::InvalidRequest("Missing serverUuid".to_string())
                 })?;
-                self.stop_server(server_uuid).await?;
+                let server_id = msg["serverId"].as_str().unwrap_or(server_uuid);
+                self.stop_server(server_id, server_uuid).await?;
+            }
+            Some("restart_server") => {
+                let server_uuid = msg["serverUuid"].as_str().ok_or_else(|| {
+                    AgentError::InvalidRequest("Missing serverUuid".to_string())
+                })?;
+                let server_id = msg["serverId"].as_str().unwrap_or(server_uuid);
+                self.stop_server(server_id, server_uuid).await?;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                self.start_server_with_details(&msg).await?;
             }
             Some("console_input") => self.handle_console_input(&msg).await?,
             Some("file_operation") => self.handle_file_operation(&msg).await?,
@@ -192,15 +202,20 @@ impl WebSocketHandler {
             AgentError::InvalidRequest("Missing serverId".to_string())
         })?;
 
+        let container_id = msg
+            .get("serverUuid")
+            .and_then(|value| value.as_str())
+            .unwrap_or(server_id);
+
         match action {
             "install" => self.install_server(msg).await?,
-            "start" => self.start_server(server_id).await?,
-            "stop" => self.stop_server(server_id).await?,
-            "kill" => self.kill_server(server_id).await?,
+            "start" => self.start_server(server_id, container_id).await?,
+            "stop" => self.stop_server(server_id, container_id).await?,
+            "kill" => self.kill_server(server_id, container_id).await?,
             "restart" => {
-                self.stop_server(server_id).await?;
+                self.stop_server(server_id, container_id).await?;
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                self.start_server(server_id).await?;
+                self.start_server(server_id, container_id).await?;
             }
             _ => {
                 return Err(AgentError::InvalidRequest(format!(
@@ -364,124 +379,259 @@ impl WebSocketHandler {
         Ok(())
     }
 
+    fn spawn_log_stream(&self, server_id: &str, container_id: &str) {
+        let handler = self.clone();
+        let server_id = server_id.to_string();
+        let container_id = container_id.to_string();
+        tokio::spawn(async move {
+            if let Err(err) = handler
+                .stream_container_logs(&server_id, &container_id)
+                .await
+            {
+                error!(
+                    "Failed to stream logs for server {} (container {}): {}",
+                    server_id, container_id, err
+                );
+                let _ = handler
+                    .emit_console_output(
+                        &server_id,
+                        "system",
+                        &format!("[Aero] Log stream error: {}\n", err),
+                    )
+                    .await;
+            }
+        });
+    }
+
+    async fn stream_container_logs(&self, server_id: &str, container_id: &str) -> AgentResult<()> {
+        let mut child = self.runtime.spawn_log_stream(container_id).await?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AgentError::InternalError("Failed to capture stdout".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| AgentError::InternalError("Failed to capture stderr".to_string()))?;
+
+        let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
+        let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+        let mut stdout_done = false;
+        let mut stderr_done = false;
+
+        while !stdout_done || !stderr_done {
+            tokio::select! {
+                line = stdout_reader.next_line(), if !stdout_done => {
+                    match line? {
+                        Some(entry) => {
+                            let payload = format!("{}\n", entry);
+                            self.emit_console_output(server_id, "stdout", &payload).await?;
+                        }
+                        None => stdout_done = true,
+                    }
+                }
+                line = stderr_reader.next_line(), if !stderr_done => {
+                    match line? {
+                        Some(entry) => {
+                            let payload = format!("{}\n", entry);
+                            self.emit_console_output(server_id, "stderr", &payload).await?;
+                        }
+                        None => stderr_done = true,
+                    }
+                }
+            }
+        }
+
+        let status = child.wait().await?;
+        if !status.success() {
+            warn!(
+                "Log stream exited for server {} (container {}) with status {:?}",
+                server_id,
+                container_id,
+                status.code()
+            );
+        }
+
+        Ok(())
+    }
+
     async fn start_server_with_details(&self, msg: &Value) -> AgentResult<()> {
         let server_id = msg["serverId"].as_str().ok_or_else(|| {
             AgentError::InvalidRequest("Missing serverId".to_string())
         })?;
 
-        let server_uuid = msg["serverUuid"].as_str().ok_or_else(|| {
-            AgentError::InvalidRequest("Missing serverUuid".to_string())
-        })?;
+        let result: AgentResult<()> = async {
+            let server_uuid = msg["serverUuid"].as_str().ok_or_else(|| {
+                AgentError::InvalidRequest("Missing serverUuid".to_string())
+            })?;
 
-        let template = msg["template"].as_object().ok_or_else(|| {
-            AgentError::InvalidRequest("Missing template".to_string())
-        })?;
+            let template = msg["template"].as_object().ok_or_else(|| {
+                AgentError::InvalidRequest("Missing template".to_string())
+            })?;
 
-        let docker_image = template.get("image")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::InvalidRequest("Missing image in template".to_string()))?;
+            let docker_image = template.get("image")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AgentError::InvalidRequest("Missing image in template".to_string()))?;
 
-        let startup_command = template.get("startup")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::InvalidRequest("Missing startup in template".to_string()))?;
+            let startup_command = template.get("startup")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AgentError::InvalidRequest("Missing startup in template".to_string()))?;
 
-        let memory_mb = msg["allocatedMemoryMb"].as_u64().ok_or_else(|| {
-            AgentError::InvalidRequest("Missing allocatedMemoryMb".to_string())
-        })?;
+            let memory_mb = msg["allocatedMemoryMb"].as_u64().ok_or_else(|| {
+                AgentError::InvalidRequest("Missing allocatedMemoryMb".to_string())
+            })?;
 
-        let cpu_cores = msg["allocatedCpuCores"].as_u64().ok_or_else(|| {
-            AgentError::InvalidRequest("Missing allocatedCpuCores".to_string())
-        })?;
+            let cpu_cores = msg["allocatedCpuCores"].as_u64().ok_or_else(|| {
+                AgentError::InvalidRequest("Missing allocatedCpuCores".to_string())
+            })?;
 
-        let primary_port = msg["primaryPort"].as_u64().ok_or_else(|| {
-            AgentError::InvalidRequest("Missing primaryPort".to_string())
-        })? as u16;
+            let primary_port = msg["primaryPort"].as_u64().ok_or_else(|| {
+                AgentError::InvalidRequest("Missing primaryPort".to_string())
+            })? as u16;
 
-        let network_mode = msg.get("networkMode")
-            .and_then(|v| v.as_str());
+            let network_mode = msg.get("networkMode")
+                .and_then(|v| v.as_str());
 
-        let environment = msg.get("environment")
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| AgentError::InvalidRequest("Missing or invalid environment".to_string()))?;
+            let environment = msg.get("environment")
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| AgentError::InvalidRequest("Missing or invalid environment".to_string()))?;
 
-        // Convert environment to HashMap
-        let mut env_map = std::collections::HashMap::new();
-        for (key, value) in environment {
-            if let Some(val_str) = value.as_str() {
-                env_map.insert(key.clone(), val_str.to_string());
+            // Convert environment to HashMap
+            let mut env_map = std::collections::HashMap::new();
+            for (key, value) in environment {
+                if let Some(val_str) = value.as_str() {
+                    env_map.insert(key.clone(), val_str.to_string());
+                }
             }
+
+            // Get SERVER_DIR from environment
+            let server_dir = environment.get("SERVER_DIR")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    format!("/tmp/aero-servers/{}", server_uuid)
+                });
+
+            info!("Starting server: {} (UUID: {})", server_id, server_uuid);
+            info!("Image: {}, Port: {}, Memory: {}MB, CPU: {}",
+                  docker_image, primary_port, memory_mb, cpu_cores);
+            self.emit_console_output(server_id, "system", "[Aero] Starting server...\n")
+                .await?;
+
+            // Replace template variables in startup command
+            let mut final_startup_command = startup_command.to_string();
+
+            // Add MEMORY to environment for variable replacement
+            env_map.insert("MEMORY".to_string(), memory_mb.to_string());
+            env_map.insert("PORT".to_string(), primary_port.to_string());
+
+            if !env_map.contains_key("MEMORY_XMS") {
+                let memory_value = env_map
+                    .get("MEMORY")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(memory_mb);
+                let xms_percent = env_map
+                    .get("MEMORY_XMS_PERCENT")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(50);
+                let memory_xms = std::cmp::max(1, (memory_value * xms_percent) / 100);
+                env_map.insert("MEMORY_XMS".to_string(), memory_xms.to_string());
+            }
+
+            // Replace all {{VARIABLE}} placeholders
+            for (key, value) in &env_map {
+                let placeholder = format!("{{{{{}}}}}", key);
+                final_startup_command = final_startup_command.replace(&placeholder, value);
+            }
+
+            info!("Final startup command: {}", final_startup_command);
+
+            let network_ip = env_map.get("AERO_NETWORK_IP").map(|value| value.as_str());
+
+            // Create and start container
+            self.runtime.create_container(
+                server_uuid,
+                docker_image,
+                &final_startup_command,
+                &env_map,
+                memory_mb,
+                cpu_cores,
+                &server_dir,
+                primary_port,
+                network_mode,
+                network_ip,
+            ).await?;
+
+            let is_running = match self.runtime.is_container_running(server_uuid).await {
+                Ok(value) => value,
+                Err(err) => {
+                    error!("Failed to check container state for {}: {}", server_uuid, err);
+                    false
+                }
+            };
+            if !is_running {
+                let reason = "Container exited immediately after start";
+                if let Ok(logs) = self.runtime.get_logs(server_uuid, Some(100)).await {
+                    if !logs.trim().is_empty() {
+                        self.emit_console_output(server_id, "stderr", &logs).await?;
+                    }
+                }
+                return Err(AgentError::ContainerError(reason.to_string()));
+            }
+
+            self.spawn_log_stream(server_id, server_uuid);
+
+            // Emit state update
+            self.emit_server_state_update(server_id, "running", None)
+                .await?;
+
+            info!("Server started successfully: {}", server_uuid);
+            Ok(())
+        }.await;
+
+        if let Err(err) = &result {
+            let reason = format!("Start failed: {}", err);
+            let _ = self.emit_console_output(server_id, "stderr", &format!("[Aero] {}\n", reason))
+                .await;
+            let _ = self.emit_server_state_update(server_id, "error", Some(reason)).await;
         }
 
-        // Get SERVER_DIR from environment
-        let server_dir = environment.get("SERVER_DIR")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                format!("/tmp/aero-servers/{}", server_uuid)
-            });
-
-        info!("Starting server: {} (UUID: {})", server_id, server_uuid);
-        info!("Image: {}, Port: {}, Memory: {}MB, CPU: {}", 
-              docker_image, primary_port, memory_mb, cpu_cores);
-
-        // Replace template variables in startup command
-        let mut final_startup_command = startup_command.to_string();
-        
-        // Add MEMORY to environment for variable replacement
-        env_map.insert("MEMORY".to_string(), memory_mb.to_string());
-        env_map.insert("PORT".to_string(), primary_port.to_string());
-        
-        // Replace all {{VARIABLE}} placeholders
-        for (key, value) in &env_map {
-            let placeholder = format!("{{{{{}}}}}", key);
-            final_startup_command = final_startup_command.replace(&placeholder, value);
-        }
-
-        info!("Final startup command: {}", final_startup_command);
-
-        let network_ip = env_map.get("AERO_NETWORK_IP").map(|value| value.as_str());
-
-        // Create and start container
-        self.runtime.create_container(
-            server_uuid,
-            docker_image,
-            &final_startup_command,
-            &env_map,
-            memory_mb,
-            cpu_cores,
-            &server_dir,
-            primary_port,
-            network_mode,
-            network_ip,
-        ).await?;
-
-        // Emit state update
-        self.emit_server_state_update(server_id, "running", None)
-            .await?;
-
-        info!("Server started successfully: {}", server_uuid);
-        Ok(())
+        result
     }
 
-    async fn start_server(&self, server_id: &str) -> AgentResult<()> {
-        info!("Starting server: {}", server_id);
+    async fn start_server(&self, server_id: &str, server_uuid: &str) -> AgentResult<()> {
+        info!("Starting server: {} (container {})", server_id, server_uuid);
 
         // In production, fetch server config from database or local cache
-        self.runtime.start_container(server_id).await?;
-
-        // Emit state update
-        self.emit_server_state_update(server_id, "running", None)
-            .await?;
-
-        Ok(())
+        match self.runtime.start_container(server_uuid).await {
+            Ok(()) => {
+                self.spawn_log_stream(server_id, server_uuid);
+                self.emit_server_state_update(server_id, "running", None)
+                    .await?;
+                Ok(())
+            }
+            Err(err) => {
+                let reason = format!("Start failed: {}", err);
+                let _ = self.emit_console_output(server_id, "stderr", &format!("[Aero] {}\n", reason))
+                    .await;
+                let _ = self.emit_server_state_update(server_id, "error", Some(reason)).await;
+                Err(err)
+            }
+        }
     }
 
-    async fn stop_server(&self, server_id: &str) -> AgentResult<()> {
-        info!("Stopping server: {}", server_id);
+    async fn stop_server(&self, server_id: &str, server_uuid: &str) -> AgentResult<()> {
+        info!("Stopping server: {} (container {})", server_id, server_uuid);
 
-        self.runtime
-            .stop_container(server_id, 30)
-            .await?;
+        if self.runtime.is_container_running(server_uuid).await.unwrap_or(false) {
+            self.runtime
+                .stop_container(server_uuid, 30)
+                .await?;
+        }
+
+        if self.runtime.container_exists(server_uuid).await {
+            self.runtime.remove_container(server_uuid).await?;
+        }
 
         self.emit_server_state_update(server_id, "stopped", None)
             .await?;
@@ -489,12 +639,16 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    async fn kill_server(&self, server_id: &str) -> AgentResult<()> {
-        info!("Killing server: {}", server_id);
+    async fn kill_server(&self, server_id: &str, server_uuid: &str) -> AgentResult<()> {
+        info!("Killing server: {} (container {})", server_id, server_uuid);
 
         self.runtime
-            .kill_container(server_id, "SIGKILL")
+            .kill_container(server_uuid, "SIGKILL")
             .await?;
+
+        if self.runtime.container_exists(server_uuid).await {
+            self.runtime.remove_container(server_uuid).await?;
+        }
 
         self.emit_server_state_update(server_id, "crashed", Some("Killed by agent".to_string()))
             .await?;
@@ -511,10 +665,26 @@ impl WebSocketHandler {
             AgentError::InvalidRequest("Missing data".to_string())
         })?;
 
-        debug!("Console input for {}: {}", server_id, data);
+        let container_id = msg
+            .get("serverUuid")
+            .and_then(|value| value.as_str())
+            .unwrap_or(server_id);
+
+        debug!(
+            "Console input for {} (container {}): {}",
+            server_id, container_id, data
+        );
 
         // Send to container stdin
-        self.runtime.send_input(server_id, data).await?;
+        if let Err(err) = self.runtime.send_input(container_id, data).await {
+            let _ = self.emit_console_output(
+                server_id,
+                "stderr",
+                &format!("[Aero] Console input failed: {}\n", err),
+            )
+            .await;
+            return Err(err);
+        }
 
         Ok(())
     }

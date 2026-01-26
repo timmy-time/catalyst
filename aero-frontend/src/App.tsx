@@ -14,7 +14,6 @@ import TemplatesPage from './pages/templates/TemplatesPage';
 import TemplateDetailsPage from './pages/templates/TemplateDetailsPage';
 import AdminTemplatesPage from './pages/admin/TemplatesPage';
 import AdminNodesPage from './pages/admin/NodesPage';
-import TasksPage from './pages/tasks/TasksPage';
 import AlertsPage from './pages/alerts/AlertsPage';
 import UsersPage from './pages/admin/UsersPage';
 import SystemPage from './pages/admin/SystemPage';
@@ -43,7 +42,6 @@ function App() {
           <Route path="servers/:serverId/:tab?" element={<ServerDetailsPage />} />
           <Route path="admin/nodes/:nodeId" element={<NodeDetailsPage />} />
           <Route path="admin/templates/:templateId" element={<TemplateDetailsPage />} />
-          <Route path="tasks" element={<TasksPage />} />
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="admin/users" element={<UsersPage />} />
           <Route path="admin/nodes" element={<AdminNodesPage />} />

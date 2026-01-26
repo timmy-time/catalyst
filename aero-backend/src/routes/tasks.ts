@@ -5,6 +5,40 @@ import cron from 'node-cron';
 export async function taskRoutes(app: FastifyInstance) {
   const prisma = (app as any).prisma || new PrismaClient();
   const authenticate = (app as any).authenticate;
+  const ensureSchedulePermission = async (
+    userId: string,
+    serverId: string,
+    reply: FastifyReply,
+    message: string,
+  ) => {
+    const server = await prisma.server.findUnique({
+      where: { id: serverId },
+      select: { ownerId: true },
+    });
+
+    if (!server) {
+      reply.status(404).send({ error: 'Server not found' });
+      return false;
+    }
+
+    if (server.ownerId === userId) {
+      return true;
+    }
+
+    const serverAccess = await prisma.serverAccess.findFirst({
+      where: {
+        serverId,
+        userId,
+      },
+    });
+
+    if (!serverAccess || !serverAccess.permissions.includes('server.schedule')) {
+      reply.status(403).send({ error: message });
+      return false;
+    }
+
+    return true;
+  };
 
   // Create a scheduled task
   app.post(
@@ -43,19 +77,13 @@ export async function taskRoutes(app: FastifyInstance) {
         });
       }
 
-      // Check server access
-      const serverAccess = await prisma.serverAccess.findFirst({
-        where: {
-          serverId,
-          userId: user.userId,
-        },
-      });
-
-      if (!serverAccess || !serverAccess.permissions.includes('server.schedule')) {
-        return reply.status(403).send({
-          error: 'You do not have permission to schedule tasks for this server',
-        });
-      }
+      const canSchedule = await ensureSchedulePermission(
+        user.userId,
+        serverId,
+        reply,
+        'You do not have permission to schedule tasks for this server',
+      );
+      if (!canSchedule) return;
 
       // Create task
       const task = await prisma.scheduledTask.create({
@@ -164,19 +192,13 @@ export async function taskRoutes(app: FastifyInstance) {
         enabled?: boolean;
       };
 
-      // Check server access
-      const serverAccess = await prisma.serverAccess.findFirst({
-        where: {
-          serverId,
-          userId: user.userId,
-        },
-      });
-
-      if (!serverAccess || !serverAccess.permissions.includes('server.schedule')) {
-        return reply.status(403).send({
-          error: 'You do not have permission to modify tasks for this server',
-        });
-      }
+      const canSchedule = await ensureSchedulePermission(
+        user.userId,
+        serverId,
+        reply,
+        'You do not have permission to modify tasks for this server',
+      );
+      if (!canSchedule) return;
 
       // Validate cron expression if provided
       if (schedule && !cron.validate(schedule)) {
@@ -221,19 +243,13 @@ export async function taskRoutes(app: FastifyInstance) {
       const user = (request as any).user;
       const { serverId, taskId } = request.params as { serverId: string; taskId: string };
 
-      // Check server access
-      const serverAccess = await prisma.serverAccess.findFirst({
-        where: {
-          serverId,
-          userId: user.userId,
-        },
-      });
-
-      if (!serverAccess || !serverAccess.permissions.includes('server.schedule')) {
-        return reply.status(403).send({
-          error: 'You do not have permission to delete tasks for this server',
-        });
-      }
+      const canSchedule = await ensureSchedulePermission(
+        user.userId,
+        serverId,
+        reply,
+        'You do not have permission to delete tasks for this server',
+      );
+      if (!canSchedule) return;
 
       // Delete task
       await prisma.scheduledTask.delete({
@@ -258,19 +274,13 @@ export async function taskRoutes(app: FastifyInstance) {
       const user = (request as any).user;
       const { serverId, taskId } = request.params as { serverId: string; taskId: string };
 
-      // Check server access
-      const serverAccess = await prisma.serverAccess.findFirst({
-        where: {
-          serverId,
-          userId: user.userId,
-        },
-      });
-
-      if (!serverAccess || !serverAccess.permissions.includes('server.schedule')) {
-        return reply.status(403).send({
-          error: 'You do not have permission to execute tasks for this server',
-        });
-      }
+      const canSchedule = await ensureSchedulePermission(
+        user.userId,
+        serverId,
+        reply,
+        'You do not have permission to execute tasks for this server',
+      );
+      if (!canSchedule) return;
 
       // Get task
       const task = await prisma.scheduledTask.findFirst({

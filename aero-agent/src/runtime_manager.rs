@@ -120,10 +120,9 @@ impl ContainerdRuntime {
 
         // Startup command (if provided)
         if !startup_command.is_empty() {
-            // Parse as shell command
-            let fifo_path = &console_fifo.path;
-            let quoted_startup = shell_quote(startup_command);
-            let pipeline = format!("cat {} | sh -c {}", fifo_path, quoted_startup);
+            // Pipe FIFO directly into the server process stdin.
+            let fifo_path = shell_quote(&console_fifo.path);
+            let pipeline = format!("exec < {} ; exec {}", fifo_path, startup_command);
             cmd.arg("sh").arg("-c").arg(pipeline);
         }
 
@@ -263,7 +262,7 @@ impl ContainerdRuntime {
     ) -> AgentResult<()> {
         let path_clone = fifo_path.clone();
         let file =
-            spawn_blocking(move || std::fs::OpenOptions::new().write(true).open(&path_clone))
+            spawn_blocking(move || std::fs::OpenOptions::new().read(true).write(true).open(&path_clone))
                 .await
                 .map_err(|e| {
                     AgentError::ContainerError(format!("Console writer task failed: {}", e))
@@ -612,6 +611,12 @@ impl ContainerdRuntime {
     pub async fn send_input(&self, container_id: &str, input: &str) -> AgentResult<()> {
         debug!("Sending input to container: {}", container_id);
 
+        if self.ensure_console_writer(container_id).await? {
+            if self.write_to_console_fifo(container_id, input).await? {
+                return Ok(());
+            }
+        }
+
         if self.write_to_console_fifo(container_id, input).await? {
             return Ok(());
         }
@@ -642,6 +647,27 @@ impl ContainerdRuntime {
         }
 
         Ok(())
+    }
+
+    async fn ensure_console_writer(&self, container_id: &str) -> AgentResult<bool> {
+        {
+            let writers = self.console_writers.lock().await;
+            if writers.contains_key(container_id) {
+                return Ok(true);
+            }
+        }
+
+        let fifo_path = PathBuf::from("/tmp/aero-console")
+            .join(container_id)
+            .join("stdin");
+        if !fifo_path.exists() {
+            return Ok(false);
+        }
+
+        self.attach_console_writer(container_id, fifo_path.to_string_lossy().into_owned())
+            .await?;
+
+        Ok(true)
     }
 
     async fn write_to_console_fifo(&self, container_id: &str, input: &str) -> AgentResult<bool> {

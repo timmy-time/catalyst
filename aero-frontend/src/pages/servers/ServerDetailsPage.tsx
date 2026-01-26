@@ -12,7 +12,9 @@ import TransferServerModal from '../../components/servers/TransferServerModal';
 import DeleteServerDialog from '../../components/servers/DeleteServerDialog';
 import FileManager from '../../components/files/FileManager';
 import BackupSection from '../../components/backups/BackupSection';
+import CreateTaskModal from '../../components/tasks/CreateTaskModal';
 import { useConsole } from '../../hooks/useConsole';
+import { useTasks } from '../../hooks/useTasks';
 import { serversApi } from '../../services/api/servers';
 import { notifyError, notifySuccess } from '../../utils/notify';
 
@@ -27,6 +29,7 @@ const tabLabels = {
   console: 'Console',
   files: 'Files',
   backups: 'Backups',
+  tasks: 'Tasks',
   metrics: 'Metrics',
   configuration: 'Configuration',
   settings: 'Settings',
@@ -38,6 +41,7 @@ function ServerDetailsPage() {
   const { data: server, isLoading, isError } = useServer(serverId);
   const liveMetrics = useServerMetrics(serverId, server?.allocatedMemoryMb);
   const events = useServerEvents(serverId);
+  const { data: tasks = [], isLoading: tasksLoading } = useTasks(serverId);
   const { isConnected } = useWebSocketStore();
   const activeTab = useMemo(() => {
     const key = tab ?? 'console';
@@ -242,6 +246,44 @@ function ServerDetailsPage() {
       {activeTab === 'backups' ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4">
           <BackupSection serverId={server.id} serverStatus={server.status} />
+        </div>
+      ) : null}
+
+      {activeTab === 'tasks' ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-100">Scheduled tasks</div>
+              <div className="text-xs text-slate-400">Automate restarts, backups, and commands.</div>
+            </div>
+            <CreateTaskModal serverId={server.id} />
+          </div>
+          <div className="mt-4">
+            {tasksLoading ? (
+              <div className="text-sm text-slate-400">Loading tasks...</div>
+            ) : tasks.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-800 bg-slate-900/50 px-6 py-8 text-center text-sm text-slate-400">
+                No tasks configured for this server yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {tasks.map((task) => (
+                  <div key={task.id} className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-100">{task.name}</div>
+                      <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                        {task.action}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {task.description || 'No description'}
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">Schedule: {task.schedule}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 

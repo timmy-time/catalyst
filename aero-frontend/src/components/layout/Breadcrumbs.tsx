@@ -5,7 +5,6 @@ const labelMap: Record<string, string> = {
   servers: 'Servers',
   nodes: 'Nodes',
   templates: 'Templates',
-  tasks: 'Tasks',
   alerts: 'Alerts',
   admin: 'Admin',
   users: 'Users',

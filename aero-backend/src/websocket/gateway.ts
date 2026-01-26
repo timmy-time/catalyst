@@ -103,8 +103,8 @@ export class WebSocketGateway {
         })
       );
 
-      socket.on("message", (data: any) => this.handleAgentMessage(node.id, data));
-      socket.on("close", () => {
+      socket.socket.on("message", (data: any) => this.handleAgentMessage(node.id, data));
+      socket.socket.on("close", () => {
         this.agents.delete(node.id);
         this.prisma.node.update({
           where: { id: node.id },
@@ -137,8 +137,8 @@ export class WebSocketGateway {
       this.clients.set(clientId, client);
       this.logger.info(`Client connected: ${clientId}`);
 
-      socket.on("message", (data: any) => this.handleClientMessage(clientId, data));
-      socket.on("close", () => {
+      socket.socket.on("message", (data: any) => this.handleClientMessage(clientId, data));
+      socket.socket.on("close", () => {
         this.clients.delete(clientId);
         this.logger.info(`Client disconnected: ${clientId}`);
       });
@@ -381,7 +381,9 @@ export class WebSocketGateway {
         // Route to agent
         const agent = this.agents.get(server.nodeId);
         if (agent && agent.socket.socket.readyState === 1) {
-          agent.socket.socket.send(JSON.stringify(event));
+          agent.socket.socket.send(
+            JSON.stringify({ ...event, serverUuid: server.uuid })
+          );
         }
       }
     } catch (err) {
