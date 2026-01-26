@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useServer } from '../../hooks/useServer';
 import { useServerMetrics } from '../../hooks/useServerMetrics';
@@ -13,17 +13,11 @@ import DeleteServerDialog from '../../components/servers/DeleteServerDialog';
 import FileManager from '../../components/files/FileManager';
 import BackupSection from '../../components/backups/BackupSection';
 import CreateTaskModal from '../../components/tasks/CreateTaskModal';
+import XtermConsole from '../../components/console/XtermConsole';
 import { useConsole } from '../../hooks/useConsole';
 import { useTasks } from '../../hooks/useTasks';
 import { serversApi } from '../../services/api/servers';
 import { notifyError, notifySuccess } from '../../utils/notify';
-
-const streamStyles: Record<string, string> = {
-  stdout: 'text-emerald-400',
-  stderr: 'text-rose-400',
-  system: 'text-sky-400',
-  stdin: 'text-amber-300',
-};
 
 const tabLabels = {
   console: 'Console',
@@ -57,33 +51,16 @@ function ServerDetailsPage() {
     clear: clearConsole,
   } = useConsole(serverId);
   const [command, setCommand] = useState('');
-  const [autoScroll, setAutoScroll] = useState(true);
-  const outputRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!outputRef.current || !autoScroll) return;
-    outputRef.current.scrollTop = outputRef.current.scrollHeight;
-  }, [entries, autoScroll]);
-
-  useEffect(() => {
-    setAutoScroll(true);
-  }, [serverId, activeTab]);
+  const canSend = isConnected && Boolean(serverId);
 
   const handleSend = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canSend) return;
     const trimmed = command.trim();
     if (!trimmed) return;
-    send(command);
+    send(trimmed);
     setCommand('');
   };
-
-  const handleScroll = () => {
-    if (!outputRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
-    const nearBottom = scrollHeight - scrollTop - clientHeight < 24;
-    setAutoScroll(nearBottom);
-  };
-
   const handleReinstall = async () => {
     if (!serverId) return;
     try {
@@ -171,71 +148,51 @@ function ServerDetailsPage() {
               <button
                 type="button"
                 className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-700"
-                onClick={() => {
-                  clearConsole();
-                  setAutoScroll(true);
-                }}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-          <div
-            ref={outputRef}
-            onScroll={handleScroll}
-            className="max-h-[60vh] overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
-          >
-            {consoleLoading ? <div className="text-slate-500">Loading recent logs...</div> : null}
-            {consoleError ? (
-              <div className="mb-2 rounded-md border border-rose-900 bg-rose-950/40 px-3 py-2 text-rose-200">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Unable to load historical logs.</span>
-                  <button
-                    type="button"
-                    className="rounded-md border border-rose-700 px-2 py-1 text-[11px] text-rose-200 hover:border-rose-600"
-                    onClick={() => refetchConsole()}
-                  >
-                    Retry
+                 onClick={() => {
+                   clearConsole();
+                 }}
+               >
+                 Clear
+               </button>
+             </div>
+           </div>
+            <div className="px-4 py-3">
+              {consoleLoading ? <div className="mb-2 text-xs text-slate-500">Loading recent logs...</div> : null}
+              {consoleError ? (
+               <div className="mb-2 rounded-md border border-rose-900 bg-rose-950/40 px-3 py-2 text-rose-200">
+                 <div className="flex items-center justify-between gap-3">
+                   <span>Unable to load historical logs.</span>
+                   <button
+                     type="button"
+                     className="rounded-md border border-rose-700 px-2 py-1 text-[11px] text-rose-200 hover:border-rose-600"
+                     onClick={() => refetchConsole()}
+                   >
+                     Retry
                   </button>
                 </div>
               </div>
             ) : null}
-            {!consoleLoading && entries.length === 0 ? (
-              <div className="text-slate-500">No console output yet.</div>
-            ) : (
-              entries.map((entry) => (
-                <div key={entry.id} className="flex gap-3">
-                  <span
-                    className={`mt-[2px] min-w-[64px] text-[10px] uppercase tracking-wide ${
-                      streamStyles[entry.stream] ?? 'text-slate-500'
-                    }`}
-                  >
-                    {entry.stream}
-                  </span>
-                  <span className="whitespace-pre-wrap break-words">{entry.data}</span>
-                </div>
-              ))
-            )}
+            <XtermConsole entries={entries} />
+            <form onSubmit={handleSend} className="mt-3 flex items-center gap-3">
+              <span className="text-xs text-slate-500">&gt;</span>
+              <input
+                className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                value={command}
+                onChange={(event) => setCommand(event.target.value)}
+                placeholder={canSend ? 'Type here' : 'Connect to send commands'}
+                disabled={!canSend}
+              />
+              <button
+                type="submit"
+                className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!canSend}
+              >
+                Send
+              </button>
+            </form>
           </div>
-          <form onSubmit={handleSend} className="flex items-center gap-3 border-t border-slate-800 px-4 py-3">
-            <span className="text-xs text-slate-500">$</span>
-            <input
-              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-              value={command}
-              onChange={(event) => setCommand(event.target.value)}
-              placeholder={isConnected ? 'Type a command and press Enter' : 'Connect to send commands'}
-              disabled={!isConnected}
-            />
-            <button
-              type="submit"
-              className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={!isConnected}
-            >
-              Send
-            </button>
-          </form>
-        </div>
-      ) : null}
+         </div>
+       ) : null}
 
       {activeTab === 'files' ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-4">
