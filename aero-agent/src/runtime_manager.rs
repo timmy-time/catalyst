@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::Write;
 use std::net::Ipv4Addr;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -18,7 +16,9 @@ use tracing::{debug, error, info, warn};
 use crate::errors::{AgentError, AgentResult};
 use crate::firewall_manager::FirewallManager;
 
-use libc;
+use nix::errno::Errno;
+use nix::sys::stat::Mode;
+use nix::unistd::mkfifo;
 
 #[derive(Clone)]
 pub struct ContainerdRuntime {
@@ -867,15 +867,11 @@ impl ContainerdRuntime {
 }
 
 fn create_fifo(path: &Path) -> std::io::Result<()> {
-    let c_path = CString::new(path.as_os_str().as_bytes())?;
-    let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o666) };
-    if ret != 0 {
-        let err = std::io::Error::last_os_error();
-        if err.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(err);
-        }
+    match mkfifo(path, Mode::from_bits_truncate(0o666)) {
+        Ok(()) => Ok(()),
+        Err(Errno::EEXIST) => Ok(()),
+        Err(err) => Err(std::io::Error::new(std::io::ErrorKind::Other, err)),
     }
-    Ok(())
 }
 
 fn add_readonly_mount(cmd: &mut Command, host_path: &str, container_path: &str) {

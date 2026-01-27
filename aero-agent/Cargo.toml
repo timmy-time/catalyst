@@ -28,7 +28,7 @@ regex = "1.10"
 sha2 = "0.10"
 base64 = "0.21"
 sysinfo = "0.30"
-libc = "0.2"
+nix = { version = "0.28", features = ["fs"] }
 
 [profile.release]
 opt-level = 3
