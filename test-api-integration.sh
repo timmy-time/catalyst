@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Aero Backend API Integration Test
+# Catalyst Backend API Integration Test
 # Tests all new endpoints added in the backend updates
 
 set -e
@@ -279,7 +279,7 @@ test_state_machine() {
 
 # Main test execution
 main() {
-    log "Starting Aero Backend API Integration Tests"
+    log "Starting Catalyst Backend API Integration Tests"
     log "=========================================="
     
     # Check if jq is installed

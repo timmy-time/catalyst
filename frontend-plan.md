@@ -1,4 +1,4 @@
-# Aero Frontend - Implementation Plan
+# Catalyst Frontend - Implementation Plan
 
 **Version:** 1.0.0  
 **Technology Stack:** React + TypeScript + Vite  
@@ -30,7 +30,7 @@
 
 ## Project Overview
 
-Aero Frontend is a modern, responsive web application for managing game servers across multiple nodes. It provides a comprehensive dashboard for server management, real-time console access, file management, backups, alerts, and administrative functions.
+Catalyst Frontend is a modern, responsive web application for managing game servers across multiple nodes. It provides a comprehensive dashboard for server management, real-time console access, file management, backups, alerts, and administrative functions.
 
 ### Key Capabilities
 - **Multi-node server management** - Manage servers across multiple physical/virtual nodes
@@ -93,7 +93,7 @@ Aero Frontend is a modern, responsive web application for managing game servers 
 ## Project Structure
 
 ```
-aero-frontend/
+catalyst-frontend/
 ├── public/
 │   ├── favicon.ico
 │   └── logo.svg
@@ -1152,7 +1152,7 @@ jobs:
       - uses: docker/build-push-action@v4
         with:
           push: true
-          tags: myregistry/aero-frontend:latest
+          tags: myregistry/catalyst-frontend:latest
 ```
 
 ---

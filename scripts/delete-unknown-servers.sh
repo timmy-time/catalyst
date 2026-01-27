@@ -8,7 +8,7 @@ Usage: scripts/delete-unknown-servers.sh [SERVER_ID ...]
        cat ids.txt | scripts/delete-unknown-servers.sh
 
 Deletes unknown servers by ID using:
-  nerdctl --namespace aero delete <server_id>
+  nerdctl --namespace catalyst delete <server_id>
 USAGE
 }
 
@@ -54,5 +54,5 @@ for raw_id in "${ids[@]}"; do
     continue
   fi
   echo "Deleting server: $server_id"
-  nerdctl --namespace aero delete "$server_id"
+  nerdctl --namespace catalyst delete "$server_id"
 done

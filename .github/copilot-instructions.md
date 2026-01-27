@@ -1,6 +1,6 @@
-# Aero - AI Coding Agent Instructions
+# Catalyst - AI Coding Agent Instructions
 
-**Project:** Aero - Production-Grade Game Server Management System  
+**Project:** Catalyst - Production-Grade Game Server Management System  
 **Last Updated:** January 24, 2026  
 **Monorepo Structure:** Backend (TypeScript), Frontend (React), Agent (Rust), Shared Types
 
@@ -8,30 +8,30 @@
 
 ## Architecture Overview
 
-Aero is a full-stack game server management system built as a three-tier monorepo. The architecture emphasizes **real-time communication**, **stateless services**, and **clear separation of concerns**.
+Catalyst is a full-stack game server management system built as a three-tier monorepo. The architecture emphasizes **real-time communication**, **stateless services**, and **clear separation of concerns**.
 
 ### Core Components
 
-1. **Backend** (`aero-backend/`) - Fastify + PostgreSQL + WebSocket Gateway
+1. **Backend** (`catalyst-backend/`) - Fastify + PostgreSQL + WebSocket Gateway
    - REST API with JWT auth and RBAC
    - WebSocket gateway for real-time client/agent communication
    - Task scheduler for cron-based actions (restart, backups)
    - SFTP server for direct file access
    - Alert service for threshold monitoring
 
-2. **Frontend** (`aero-frontend/`) - React 18 + Vite + TypeScript
+2. **Frontend** (`catalyst-frontend/`) - React 18 + Vite + TypeScript
    - TanStack Query for API state management
    - WebSocket connection for live console/metrics
    - Terminal emulator (ghostty-web) for console access
    - Radix UI for accessible components
 
-3. **Agent** (`aero-agent/`) - Rust + Tokio + Containerd
+3. **Agent** (`catalyst-agent/`) - Rust + Tokio + Containerd
    - Daemon connecting to backend via WebSocket
    - Container lifecycle management (creatable via nerdctl, not Docker)
    - Health reporting, metrics collection, file operations
    - System metrics collection every 30 seconds
 
-4. **Shared Types** (`aero-shared/`) - Type definitions synced across services
+4. **Shared Types** (`catalyst-shared/`) - Type definitions synced across services
 
 ---
 
@@ -67,7 +67,7 @@ Aero is a full-stack game server management system built as a three-tier monorep
 
 ### Backend Setup
 ```bash
-cd aero-backend
+cd catalyst-backend
 npm install
 npm run db:push          # Sync Prisma schema to PostgreSQL
 npm run db:seed          # Populate with test data
@@ -81,7 +81,7 @@ npm run dev              # Start Fastify with tsx watch (port 3000)
 
 ### Frontend Setup
 ```bash
-cd aero-frontend
+cd catalyst-frontend
 npm install
 npm run dev              # Vite dev server (port 5173)
 npm run test             # Vitest unit tests
@@ -90,20 +90,20 @@ npm run test:e2e         # Playwright integration tests
 
 ### Agent Setup
 ```bash
-cd aero-agent
-cargo build --release   # ~2-3 minutes; produces `target/release/aero-agent`
+cd catalyst-agent
+cargo build --release   # ~2-3 minutes; produces `target/release/catalyst-agent`
 cargo build             # Debug build for development (slower runtime)
 
 # Configuration
-cp config.toml /opt/aero-agent/
-# Edit /opt/aero-agent/config.toml with backend_url, node_id, secret
+cp config.toml /opt/catalyst-agent/
+# Edit /opt/catalyst-agent/config.toml with backend_url, node_id, secret
 ```
 
 ### Full Stack Locally
 ```bash
 docker-compose up -d    # Starts PostgreSQL on :5432
-cd aero-backend && npm run dev &
-cd aero-frontend && npm run dev &
+cd catalyst-backend && npm run dev &
+cd catalyst-frontend && npm run dev &
 # Backend @ http://localhost:3000
 # Frontend @ http://localhost:5173
 ```
@@ -113,7 +113,7 @@ cd aero-frontend && npm run dev &
 ## Critical Code Patterns
 
 ### Server State Machine
-File: `aero-backend/src/services/state-machine.ts`
+File: `catalyst-backend/src/services/state-machine.ts`
 
 Server lifecycle: `stopped` → `installing/starting/running/stopping/crashed`
 
@@ -148,7 +148,7 @@ Agents send `resource_stats` and `health_report` every 30 seconds via WebSocket.
 - **Note:** Metrics not retroactively filled if agent offline; alert if gaps > 2 minutes
 
 ### RBAC Middleware  
-File: `aero-backend/src/middleware/rbac.ts`
+File: `catalyst-backend/src/middleware/rbac.ts`
 
 Applied to all protected routes:
 ```typescript
@@ -161,7 +161,7 @@ app.post('/api/servers/:id/start',
 **When adding new endpoints:** Add permission check middleware, update `Permission` enum in database schema.
 
 ### WebSocket Message Routing
-File: `aero-backend/src/websocket/gateway.ts`
+File: `catalyst-backend/src/websocket/gateway.ts`
 
 ```typescript
 // Messages from agents route to backend storage
@@ -177,14 +177,14 @@ type: 'console_input' (client) → routes to agent via WebSocket → executes on
 
 ### PostgreSQL + Prisma
 - Connection string: `.env` `DATABASE_URL`
-- Schema: `aero-backend/prisma/schema.prisma`
+- Schema: `catalyst-backend/prisma/schema.prisma`
 - **On schema changes:** Run `npm run db:migrate` (creates versioned migrations)
 
 ### Containerd API
 - Agent connects to `/run/containerd/containerd.sock` (configurable)
 - Uses protocol buffers; pre-compiled in dependencies
 - Requires `runc` or `crun` runtime available on node
-- **Important:** Namespace isolation in config; defaults to `"aero"`
+- **Important:** Namespace isolation in config; defaults to `"catalyst"`
 
 ### JWT Authentication
 - Secret: `.env` `JWT_SECRET` (25+ characters in production)
@@ -229,11 +229,11 @@ test('displays server name', () => {
 ```
 
 ### Integration Testing
-WebSocket tests in `aero-agent` use `tokio-test` crate:
+WebSocket tests in `catalyst-agent` use `tokio-test` crate:
 ```rust
 #[tokio::test]
 async fn test_server_start() {
-  let agent = AeroAgent::new(config).await.unwrap();
+  let agent = CatalystAgent::new(config).await.unwrap();
   // Simulate backend command
   // Assert state change
 }
@@ -251,14 +251,14 @@ async fn test_server_start() {
 5. If database changes needed, run `npm run db:migrate`
 
 ### Adding a Database Model
-1. Update `aero-backend/prisma/schema.prisma`
+1. Update `catalyst-backend/prisma/schema.prisma`
 2. Run `npm run db:migrate` (enter a descriptive name)
 3. Regenerate Prisma client: `npm run db:push` (automatic after migrate)
 4. Use in backend routes via `prisma.example.findUnique()`
 
 ### Modifying WebSocket Protocol
 1. Update `auro-backend/src/websocket/gateway.ts` for backend handling
-2. Update `aero-agent/src/websocket_handler.rs` for agent response
+2. Update `catalyst-agent/src/websocket_handler.rs` for agent response
 3. Test message flow with `npm run dev` & manual WebSocket client
 4. **Critical:** Maintain backward compatibility with deployed agents (version message types)
 
@@ -267,13 +267,13 @@ Backend + Frontend:
 ```bash
 npm run build          # Compile to dist/
 npm start              # Runs node dist/index.js (port 3000)
-# Or via Docker: docker build -t aero-backend .
+# Or via Docker: docker build -t catalyst-backend .
 ```
 
 Agent:
 ```bash
-cargo build --release  # Produces aero-agent binary (~50MB)
-systemctl restart aero-agent  # On node running service
+cargo build --release  # Produces catalyst-agent binary (~50MB)
+systemctl restart catalyst-agent  # On node running service
 ```
 
 ---
@@ -309,7 +309,7 @@ systemctl restart aero-agent  # On node running service
 - **WebSocket connections:** Backend designed for ~100s concurrent connections per instance
 - **Database:** Recommended PostgreSQL 14+ for JSON operators
 - **Agent:** Idle connections send heartbeats every 30s; server-side timout ~5min recommended
-- **Backups:** Compression (gzip) saves 70-90% space; stored locally in `/var/lib/aero/backups/`
+- **Backups:** Compression (gzip) saves 70-90% space; stored locally in `/var/lib/catalyst/backups/`
 
 ---
 
@@ -327,11 +327,11 @@ systemctl restart aero-agent  # On node running service
 
 - **Architecture:** [README-old.md](../README-old.md), [plan.md](../plan.md)
 - **API Reference:** [backend-docs.md](../backend-docs.md)
-- **Backend Structure:** `aero-backend/src/` (routes, middleware, services, websocket)
-- **Frontend Structure:** `aero-frontend/src/` (pages, components, hooks, services, stores)
-- **Agent Structure:** `aero-agent/src/` (websocket_handler, runtime_manager, file_manager)
-- **Database Schema:** `aero-backend/prisma/schema.prisma`
-- **Test Examples:** `tests/` directory (bash) + `aero-frontend/` (vitest, playwright)
+- **Backend Structure:** `catalyst-backend/src/` (routes, middleware, services, websocket)
+- **Frontend Structure:** `catalyst-frontend/src/` (pages, components, hooks, services, stores)
+- **Agent Structure:** `catalyst-agent/src/` (websocket_handler, runtime_manager, file_manager)
+- **Database Schema:** `catalyst-backend/prisma/schema.prisma`
+- **Test Examples:** `tests/` directory (bash) + `catalyst-frontend/` (vitest, playwright)
 
 ---
 

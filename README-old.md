@@ -1,8 +1,8 @@
-# Aero - Production-Grade Game Server Management System
+# Catalyst - Production-Grade Game Server Management System
 
 ## Overview
 
-**Aero** is a modern, containerized game server management system designed for high-performance environments. It completely bypasses Docker in favor of **Containerd** managed via **nerdctl**, providing superior resource isolation and reliability.
+**Catalyst** is a modern, containerized game server management system designed for high-performance environments. It completely bypasses Docker in favor of **Containerd** managed via **nerdctl**, providing superior resource isolation and reliability.
 
 ### Architecture
 
@@ -31,7 +31,7 @@ docker-compose up -d
 
 2. **Initialize Database**
 ```bash
-cd aero-backend
+cd catalyst-backend
 npm install
 npm run db:push
 npm run db:seed
@@ -45,7 +45,7 @@ npm run db:seed
 
 1. **Build Agent (Linux only)**
 ```bash
-cd /root/catalyst3/aero-agent
+cd /root/catalyst3/catalyst-agent
 cargo build --release
 ```
 
@@ -62,11 +62,11 @@ bash <(curl -s http://localhost:3000/api/deploy/<deployment-token>)
 3. **Configure Agent**
 ```bash
 # Edit config
-sudo nano /opt/aero-agent/config.toml
+sudo nano /opt/catalyst-agent/config.toml
 
 # Start service
-sudo systemctl start aero-agent
-sudo systemctl status aero-agent
+sudo systemctl start catalyst-agent
+sudo systemctl status catalyst-agent
 ```
 
 ## API Documentation
@@ -249,8 +249,8 @@ curl -X POST http://localhost:3000/api/templates \
 ## Project Structure
 
 ```
-aero/
-├── aero-backend/              # TypeScript backend
+catalyst/
+├── catalyst-backend/              # TypeScript backend
 │   ├── src/
 │   │   ├── index.ts           # Entry point
 │   │   ├── config.ts          # Configuration
@@ -261,7 +261,7 @@ aero/
 │   │   └── schema.prisma      # Database schema
 │   └── Dockerfile
 │
-├── aero-agent/                # Rust daemon
+├── catalyst-agent/                # Rust daemon
 │   ├── src/
 │   │   ├── main.rs            # Entry point
 │   │   ├── config.rs          # Config management
@@ -272,7 +272,7 @@ aero/
 │   ├── Cargo.toml
 │   └── Dockerfile
 │
-├── aero-shared/               # Shared types
+├── catalyst-shared/               # Shared types
 │   └── types.ts               # Interface definitions
 │
 ├── templates/                 # Server templates
@@ -313,7 +313,7 @@ aero/
 
 ### Agent
 - Release build: `cargo build --release`
-- Set `RUST_LOG=aero_agent=info` for logging
+- Set `RUST_LOG=catalyst_agent=info` for logging
 - Tune containerd settings in `/etc/containerd/config.toml`
 - Allocate sufficient system resources
 
@@ -321,15 +321,15 @@ aero/
 
 ### Database Migrations
 ```bash
-cd aero-backend
+cd catalyst-backend
 npm run db:migrate
 npm run db:studio  # UI viewer
 ```
 
 ### Logs
 - Backend: stdout via pino
-- Agent: `/var/log/aero-agent.log`
-- System: `journalctl -u aero-agent`
+- Agent: `/var/log/catalyst-agent.log`
+- System: `journalctl -u catalyst-agent`
 
 ### Monitoring
 - Health endpoint: `/health`
@@ -348,5 +348,5 @@ MIT
 ## Support
 
 For issues, feature requests, or questions:
-- GitHub Issues: [aero/issues](https://github.com/yourusername/aero/issues)
-- Documentation: [aero-docs](https://aero.example.com/docs)
+- GitHub Issues: [catalyst/issues](https://github.com/yourusername/catalyst/issues)
+- Documentation: [catalyst-docs](https://catalyst.example.com/docs)

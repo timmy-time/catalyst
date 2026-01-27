@@ -68,7 +68,7 @@ echo ""
 
 # Run agent (it will initialize and then try to connect)
 # We'll kill it after initialization
-timeout 10 /root/catalyst3/aero-agent/target/release/aero-agent || true
+timeout 10 /root/catalyst3/catalyst-agent/target/release/catalyst-agent || true
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

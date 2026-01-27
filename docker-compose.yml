@@ -20,7 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: aero-redis
+    container_name: catalyst-redis
     ports:
       - "6379:6379"
     healthcheck:

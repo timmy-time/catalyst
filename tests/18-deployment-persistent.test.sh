@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aero E2E Test - Persistent Deployment (Container Kept for Manual Testing)
+# Catalyst E2E Test - Persistent Deployment (Container Kept for Manual Testing)
 # Tests: Auth → Template → Server Creation → Installation → Container Deployment
 # NOTE: Container is NOT cleaned up - left running for manual inspection
 
@@ -145,7 +145,7 @@ SERVER_DATA=$(cat <<SERVEREOF
     "ONLINE_MODE": "false",
     "WHITE_LIST": "false",
     "MAX_PLAYERS": "20",
-    "MOTD": "Aero E2E Test Server",
+    "MOTD": "Catalyst E2E Test Server",
     "ENABLE_RCON": "false"
   }
 }
@@ -192,11 +192,11 @@ cat << 'DEPLOYINFO'
 ║  🚀 CRITICAL STEP: Real Container Deployment              ║
 ╚════════════════════════════════════════════════════════════╝
 
-In production, the Aero Agent follows industry-standard containerd flow:
+In production, the Catalyst Agent follows industry-standard containerd flow:
 
   1. Receive WebSocket "install" command
   2. Create persistent storage directory (UUID-based)
-     → /var/lib/aero/servers/<server-uuid>/
+     → /var/lib/catalyst/servers/<server-uuid>/
   3. Run install script DIRECTLY ON THE NODE (not in container!)
      → Downloads server.jar (Paper, Forge, etc.)
      → Accepts EULA
@@ -243,7 +243,7 @@ echo ""
 
 log_info "Test 4.2: Prepare server data directory"
 # Create persistent data directory for this server (using UUID)
-SERVER_DATA_DIR="/tmp/aero-servers/$SERVER_UUID"
+SERVER_DATA_DIR="/tmp/catalyst-servers/$SERVER_UUID"
 mkdir -p "$SERVER_DATA_DIR"
 log_success "✓ Server directory created: $SERVER_DATA_DIR"
 ((TESTS_RUN++))
@@ -312,14 +312,14 @@ if echo "$response" | jq -e '.success' > /dev/null 2>&1; then
     log_info "Waiting for container to start (10 seconds)..."
     sleep 10
     
-    # Verify container was created (in aero namespace)
-    if nerdctl --namespace aero ps --format '{{.Names}}' | grep -q "^${SERVER_UUID}$"; then
+    # Verify container was created (in catalyst namespace)
+    if nerdctl --namespace catalyst ps --format '{{.Names}}' | grep -q "^${SERVER_UUID}$"; then
         log_success "✓ Container created and started by agent"
         ((TESTS_RUN++))
         ((TESTS_PASSED++))
     else
         log_error "✗ Container not found"
-        nerdctl --namespace aero ps -a | grep "$SERVER_UUID" || echo "No container found"
+        nerdctl --namespace catalyst ps -a | grep "$SERVER_UUID" || echo "No container found"
         ((TESTS_RUN++))
         ((TESTS_FAILED++))
         exit 1
@@ -343,15 +343,15 @@ echo ""
 print_section "STEP 5: Deployment Validation"
 
 log_info "Test 5.1: Verify container is running"
-if nerdctl --namespace aero ps | grep -q "$SERVER_UUID"; then
-    CONTAINER_STATUS=$(nerdctl --namespace aero ps --format '{{.Names}}\t{{.Status}}' | grep "$SERVER_UUID" | awk '{print $2,$3}')
+if nerdctl --namespace catalyst ps | grep -q "$SERVER_UUID"; then
+    CONTAINER_STATUS=$(nerdctl --namespace catalyst ps --format '{{.Names}}\t{{.Status}}' | grep "$SERVER_UUID" | awk '{print $2,$3}')
     log_success "✓ Container is RUNNING"
     log_success "  → Status: $CONTAINER_STATUS"
     ((TESTS_RUN++))
     ((TESTS_PASSED++))
 else
     log_error "✗ Container not running"
-    nerdctl --namespace aero ps -a | grep "$SERVER_UUID"
+    nerdctl --namespace catalyst ps -a | grep "$SERVER_UUID"
     ((TESTS_RUN++))
     ((TESTS_FAILED++))
     exit 1
@@ -359,8 +359,8 @@ fi
 echo ""
 
 log_info "Test 5.2: Check container resource limits"
-CONTAINER_MEMORY=$(nerdctl --namespace aero inspect "$SERVER_UUID" | jq -r '.[0].HostConfig.Memory')
-CONTAINER_CPUS=$(nerdctl --namespace aero inspect "$SERVER_UUID" | jq -r '.[0].HostConfig.CpuQuota')
+CONTAINER_MEMORY=$(nerdctl --namespace catalyst inspect "$SERVER_UUID" | jq -r '.[0].HostConfig.Memory')
+CONTAINER_CPUS=$(nerdctl --namespace catalyst inspect "$SERVER_UUID" | jq -r '.[0].HostConfig.CpuQuota')
 
 if [ "$CONTAINER_MEMORY" = "2147483648" ]; then
     log_success "✓ Memory limit: 2GB (correct)"
@@ -374,7 +374,7 @@ log_success "✓ Resource limits applied"
 echo ""
 
 log_info "Test 5.3: Verify volume mount and persistent data"
-CONTAINER_MOUNTS=$(nerdctl --namespace aero inspect "$SERVER_UUID" | jq -r '.[0].Mounts[] | "\(.Source):\(.Destination)"')
+CONTAINER_MOUNTS=$(nerdctl --namespace catalyst inspect "$SERVER_UUID" | jq -r '.[0].Mounts[] | "\(.Source):\(.Destination)"')
 if echo "$CONTAINER_MOUNTS" | grep -q "$SERVER_DATA_DIR:/data"; then
     log_success "✓ Volume mounted: $SERVER_DATA_DIR → /data"
     
@@ -393,7 +393,7 @@ fi
 echo ""
 
 log_info "Test 5.4: Verify port bindings"
-CONTAINER_PORTS=$(nerdctl --namespace aero port "$SERVER_UUID")
+CONTAINER_PORTS=$(nerdctl --namespace catalyst port "$SERVER_UUID")
 if echo "$CONTAINER_PORTS" | grep -q "$SERVER_PORT"; then
     log_success "✓ Port binding: 127.0.0.1:$SERVER_PORT → $SERVER_PORT"
     ((TESTS_RUN++))
@@ -409,11 +409,11 @@ log_info "Test 5.5: Check Minecraft server startup logs"
 log_info "Fetching container logs (first 30 lines)..."
 echo ""
 echo "─────────────────────── CONTAINER LOGS ───────────────────────"
-nerdctl --namespace aero logs "$SERVER_UUID" 2>&1 | head -30
+nerdctl --namespace catalyst logs "$SERVER_UUID" 2>&1 | head -30
 echo "──────────────────────────────────────────────────────────────"
 echo ""
 
-if nerdctl --namespace aero logs "$SERVER_UUID" 2>&1 | grep -iq "starting minecraft server\|loading libraries\|starting net.minecraft.server\|done\|preparing level\|preparing spawn"; then
+if nerdctl --namespace catalyst logs "$SERVER_UUID" 2>&1 | grep -iq "starting minecraft server\|loading libraries\|starting net.minecraft.server\|done\|preparing level\|preparing spawn"; then
     log_success "✓ Minecraft server is starting up"
     ((TESTS_RUN++))
     ((TESTS_PASSED++))
@@ -482,21 +482,21 @@ ${COLOR_GREEN}What Was Tested:${COLOR_RESET}
 ${COLOR_CYAN}Next Steps - Manual Testing:${COLOR_RESET}
 
   🔍 View Live Logs:
-    nerdctl --namespace aero logs -f $SERVER_UUID
+    nerdctl --namespace catalyst logs -f $SERVER_UUID
   
   🎮 Connect to Console (send Minecraft commands):
-    nerdctl --namespace aero attach $SERVER_UUID
+    nerdctl --namespace catalyst attach $SERVER_UUID
     # Then type commands like: say Hello World
     # Detach: Ctrl+P, Ctrl+Q
   
   💻 Execute Shell Inside Container:
-    nerdctl --namespace aero exec -it $SERVER_UUID sh
+    nerdctl --namespace catalyst exec -it $SERVER_UUID sh
   
   📊 View Container Stats:
     nerdctl stats $SERVER_UUID
   
   🔍 Inspect Container Configuration:
-    nerdctl --namespace aero inspect $SERVER_UUID
+    nerdctl --namespace catalyst inspect $SERVER_UUID
   
   📁 Browse Server Files:
     ls -lh $SERVER_DATA_DIR

@@ -13,7 +13,7 @@ log_section "Complete End-to-End Workflow Test"
 
 # Unique test identifiers
 TEST_ID=$(unique_id)
-CONTAINER_NAME="aero-test-${TEST_ID}"
+CONTAINER_NAME="catalyst-test-${TEST_ID}"
 
 cleanup() {
     log_info "Cleaning up test resources..."
@@ -22,10 +22,10 @@ cleanup() {
     stop_agent_test_mode
     
     # Clean up containers
-    cleanup_nerdctl_containers "aero-test-"
+    cleanup_nerdctl_containers "catalyst-test-"
     
     # Clean up temp files
-    rm -f /tmp/aero-agent-test.toml /tmp/aero-agent-test.log
+    rm -f /tmp/catalyst-agent-test.toml /tmp/catalyst-agent-test.log
 }
 setup_cleanup_trap cleanup
 
@@ -89,9 +89,9 @@ assert_not_empty "$NODE_SECRET" "Node secret generated"
 
 # Step 5: Verify Agent Binary Exists
 log_section "Step 5: Verify Agent Binary"
-if [ ! -f /root/catalyst3/aero-agent/target/release/aero-agent ]; then
+if [ ! -f /root/catalyst3/catalyst-agent/target/release/catalyst-agent ]; then
     log_error "Agent binary not found, building..."
-    cd /root/catalyst3/aero-agent
+    cd /root/catalyst3/catalyst-agent
     cargo build --release
 fi
 assert_equals "$?" "0" "Agent binary available"

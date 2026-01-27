@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aero E2E Test - Complete Game Server Deployment Flow
+# Catalyst E2E Test - Complete Game Server Deployment Flow
 # Tests: Auth → Template → Server Creation → Container Deployment → Validation
 
 set -uo pipefail
@@ -173,7 +173,7 @@ SERVER_DATA=$(cat <<SERVEREOF
     "ONLINE_MODE": "false",
     "WHITE_LIST": "false",
     "MAX_PLAYERS": "20",
-    "MOTD": "Aero E2E Test Server",
+    "MOTD": "Catalyst E2E Test Server",
     "ENABLE_RCON": "false"
   }
 }
@@ -220,11 +220,11 @@ cat << 'DEPLOYINFO'
 ║  🚀 CRITICAL STEP: Real Container Deployment              ║
 ╚════════════════════════════════════════════════════════════╝
 
-In production, the Aero Agent follows industry-standard containerd flow:
+In production, the Catalyst Agent follows industry-standard containerd flow:
 
   1. Receive WebSocket "install" command
   2. Create persistent storage directory (UUID-based)
-     → /var/lib/aero/servers/<server-uuid>/
+     → /var/lib/catalyst/servers/<server-uuid>/
   3. Run install script DIRECTLY ON THE NODE (not in container!)
      → Downloads server.jar (Paper, Forge, etc.)
      → Accepts EULA
@@ -271,7 +271,7 @@ echo ""
 
 log_info "Test 4.2: Prepare server data directory"
 # Create persistent data directory for this server (using UUID)
-SERVER_DATA_DIR="/tmp/aero-servers/$SERVER_UUID"
+SERVER_DATA_DIR="/tmp/catalyst-servers/$SERVER_UUID"
 mkdir -p "$SERVER_DATA_DIR"
 log_success "✓ Server directory created: $SERVER_DATA_DIR"
 ((TESTS_RUN++))
@@ -299,7 +299,7 @@ FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{LEVEL_TYPE\}\}/minecraft:norma
 FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{ONLINE_MODE\}\}/false}"
 FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{WHITE_LIST\}\}/false}"
 FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{MAX_PLAYERS\}\}/20}"
-FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{MOTD\}\}/Aero Test Server}"
+FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{MOTD\}\}/Catalyst Test Server}"
 FINAL_INSTALL_SCRIPT="${FINAL_INSTALL_SCRIPT//\{\{ENABLE_RCON\}\}/false}"
 
 # Run the installation script directly on the host (simulating what the agent would do)
@@ -538,7 +538,7 @@ ${COLOR_GREEN}What Was Tested:${COLOR_RESET}
 ${COLOR_CYAN}Next Steps (Production):${COLOR_RESET}
   1. Agent receives install command via WebSocket
      → Message: {"action": "install", "serverId": "$SERVER_ID"}
-     → Creates /var/lib/aero/servers/$SERVER_UUID directory
+     → Creates /var/lib/catalyst/servers/$SERVER_UUID directory
      → Runs template's installScript DIRECTLY ON NODE (bash)
      → Downloads/stages all required files
   

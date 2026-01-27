@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo "Aero E2E Test - Agent <-> Backend"
+echo "Catalyst E2E Test - Agent <-> Backend"
 echo "======================================"
 echo ""
 
@@ -44,14 +44,14 @@ echo "  Node ID: $NODE_ID"
 echo "  Secret: $NODE_SECRET"
 
 echo ""
-echo -e "${BLUE}[3/5] Starting Aero Agent...${NC}"
-cd /root/catalyst3/aero-agent
+echo -e "${BLUE}[3/5] Starting Catalyst Agent...${NC}"
+cd /root/catalyst3/catalyst-agent
 
 # Kill any existing agent
-pkill -9 aero-agent 2>/dev/null || true
+pkill -9 catalyst-agent 2>/dev/null || true
 
 # Start agent with E2E config
-RUST_LOG=info ./target/release/aero-agent --config config-e2e.toml > /tmp/agent-e2e.log 2>&1 &
+RUST_LOG=info ./target/release/catalyst-agent --config config-e2e.toml > /tmp/agent-e2e.log 2>&1 &
 AGENT_PID=$!
 echo "  Agent PID: $AGENT_PID"
 

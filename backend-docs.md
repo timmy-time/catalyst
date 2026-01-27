@@ -1,4 +1,4 @@
-# Aero Backend - Complete API Documentation
+# Catalyst Backend - Complete API Documentation
 
 **Version:** 1.0.0  
 **Base URL:** `http://localhost:3000`  
@@ -178,7 +178,7 @@ Get all users in the system (admin only).
 
 ## Nodes
 
-Nodes represent physical or virtual machines that run the Aero agent and host game servers.
+Nodes represent physical or virtual machines that run the Catalyst agent and host game servers.
 
 ### List Nodes
 
@@ -438,7 +438,7 @@ Core server management endpoints.
       "allocatedDiskMb": 10240,
       "primaryPort": 25565,
       "networkMode": "bridge",
-      "containerName": "aero-8fec71a3",
+      "containerName": "catalyst-8fec71a3",
       "cpuUsage": 45.2,
       "memoryUsageMb": 2048,
       "createdAt": "2026-01-24T19:29:23.274Z",
@@ -494,7 +494,7 @@ Core server management endpoints.
       "MEMORY": "4096M",
       "PORT": "25565"
     },
-    "containerName": "aero-8fec71a3",
+    "containerName": "catalyst-8fec71a3",
     "containerId": "docker-container-id",
     "cpuUsage": 45.2,
     "memoryUsageMb": 2048,
@@ -1017,7 +1017,7 @@ Extract a tar.gz archive.
       "id": "backup123",
       "serverId": "server123",
       "name": "manual-backup-20260125",
-      "path": "/var/lib/aero/backups/server123/manual-backup-20260125.tar.gz",
+      "path": "/var/lib/catalyst/backups/server123/manual-backup-20260125.tar.gz",
       "sizeMb": 256,
       "checksum": "sha256:abc123...",
       "status": "completed",
@@ -1648,7 +1648,7 @@ Sent every 30 seconds to keep connection alive.
   "type": "backup_complete",
   "serverId": "server123",
   "backupName": "manual-20260125",
-  "backupPath": "/var/lib/aero/backups/server123/manual-20260125.tar.gz",
+  "backupPath": "/var/lib/catalyst/backups/server123/manual-20260125.tar.gz",
   "sizeMb": 256,
   "checksum": "sha256:abc123..."
 }
@@ -1803,8 +1803,8 @@ Sent every 30 seconds.
   "serverId": "server123",
   "serverUuid": "8fec71a3-9d19-45f7-8362-900674cde45c",
   "backupName": "manual-20260125",
-  "serverDir": "/tmp/aero-servers/8fec71a3-9d19-45f7-8362-900674cde45c",
-  "backupPath": "/var/lib/aero/backups/8fec71a3-9d19-45f7-8362-900674cde45c/manual-20260125.tar.gz"
+  "serverDir": "/tmp/catalyst-servers/8fec71a3-9d19-45f7-8362-900674cde45c",
+  "backupPath": "/var/lib/catalyst/backups/8fec71a3-9d19-45f7-8362-900674cde45c/manual-20260125.tar.gz"
 }
 ```
 
@@ -1816,8 +1816,8 @@ Sent every 30 seconds.
   "type": "restore_backup",
   "serverId": "server123",
   "serverUuid": "8fec71a3-9d19-45f7-8362-900674cde45c",
-  "backupPath": "/var/lib/aero/backups/server123/manual-20260125.tar.gz",
-  "serverDir": "/tmp/aero-servers/8fec71a3-9d19-45f7-8362-900674cde45c"
+  "backupPath": "/var/lib/catalyst/backups/server123/manual-20260125.tar.gz",
+  "serverDir": "/tmp/catalyst-servers/8fec71a3-9d19-45f7-8362-900674cde45c"
 }
 ```
 
@@ -1828,7 +1828,7 @@ Sent every 30 seconds.
 {
   "type": "delete_backup",
   "serverId": "server123",
-  "backupPath": "/var/lib/aero/backups/server123/manual-20260125.tar.gz"
+  "backupPath": "/var/lib/catalyst/backups/server123/manual-20260125.tar.gz"
 }
 ```
 

@@ -2,7 +2,7 @@
   "id": "hytale",
   "name": "Hytale",
   "description": "Set out on an adventure built for both creation and play. Hytale blends the freedom of a sandbox with the momentum of an RPG: explore a procedurally generated world full of dungeons, secrets, and a variety of creatures, then shape it block by block.",
-  "author": "Aero Maintainers",
+  "author": "Catalyst Maintainers",
   "version": "latest",
   "image": "ghcr.io/pterodactyl/games:hytale",
   "installImage": "ghcr.io/pterodactyl/installers:alpine",
@@ -79,7 +79,7 @@
       "input": "checkbox"
     }
   ],
-  "installScript": "#!/bin/sh\nset -e\n\n\necho '[Aero] Starting Hytale server installation...'\n\nmkdir -p {{SERVER_DIR}}\ncd {{SERVER_DIR}}\n\nif command -v apk >/dev/null 2>&1; then\n  apk add --no-cache curl unzip\nfi\n\nDOWNLOAD_URL=\"https://downloader.hytale.com/hytale-downloader.zip\"\n\necho '[Aero] Downloading Hytale Downloader CLI...'\nrm -f hytale-downloader.zip\nif command -v curl >/dev/null 2>&1; then\n  curl -fsSL -o hytale-downloader.zip \"$DOWNLOAD_URL\"\nelif command -v wget >/dev/null 2>&1; then\n  wget -q -O hytale-downloader.zip \"$DOWNLOAD_URL\"\nelse\n  echo '[Aero] ERROR: curl or wget is required'\n  exit 1\nfi\n\nunzip -o hytale-downloader.zip -d hytale-downloader\nmv hytale-downloader/hytale-downloader-linux-amd64 hytale-downloader/hytale-downloader-linux\nchmod 555 hytale-downloader/hytale-downloader-linux\n\necho \"[Aero] Hytale Downloader version: $(./hytale-downloader/hytale-downloader-linux -version)\"\n\necho '[Aero] Downloading server files...'\nPATCHLINE=\"{{HYTALE_PATCHLINE}}\"\nSERVER_ZIP=\"{{SERVER_DIR}}/hytale-server.zip\"\n./hytale-downloader/hytale-downloader-linux -patchline \"$PATCHLINE\" -download-path \"$SERVER_ZIP\"\n\nunzip -o \"$SERVER_ZIP\" -d \"{{SERVER_DIR}}\"\n\nrm -f \"$SERVER_ZIP\"\n\nmkdir -p \"{{SERVER_DIR}}/logs\"\nchown -R 1001:1001 \"{{SERVER_DIR}}\" || true\nchmod -R 777 \"{{SERVER_DIR}}\" || true\n\n\necho '[Aero] Installation complete!'\n",
+  "installScript": "#!/bin/sh\nset -e\n\n\necho '[Catalyst] Starting Hytale server installation...'\n\nmkdir -p {{SERVER_DIR}}\ncd {{SERVER_DIR}}\n\nif command -v apk >/dev/null 2>&1; then\n  apk add --no-cache curl unzip\nfi\n\nDOWNLOAD_URL=\"https://downloader.hytale.com/hytale-downloader.zip\"\n\necho '[Catalyst] Downloading Hytale Downloader CLI...'\nrm -f hytale-downloader.zip\nif command -v curl >/dev/null 2>&1; then\n  curl -fsSL -o hytale-downloader.zip \"$DOWNLOAD_URL\"\nelif command -v wget >/dev/null 2>&1; then\n  wget -q -O hytale-downloader.zip \"$DOWNLOAD_URL\"\nelse\n  echo '[Catalyst] ERROR: curl or wget is required'\n  exit 1\nfi\n\nunzip -o hytale-downloader.zip -d hytale-downloader\nmv hytale-downloader/hytale-downloader-linux-amd64 hytale-downloader/hytale-downloader-linux\nchmod 555 hytale-downloader/hytale-downloader-linux\n\necho \"[Catalyst] Hytale Downloader version: $(./hytale-downloader/hytale-downloader-linux -version)\"\n\necho '[Catalyst] Downloading server files...'\nPATCHLINE=\"{{HYTALE_PATCHLINE}}\"\nSERVER_ZIP=\"{{SERVER_DIR}}/hytale-server.zip\"\n./hytale-downloader/hytale-downloader-linux -patchline \"$PATCHLINE\" -download-path \"$SERVER_ZIP\"\n\nunzip -o \"$SERVER_ZIP\" -d \"{{SERVER_DIR}}\"\n\nrm -f \"$SERVER_ZIP\"\n\nmkdir -p \"{{SERVER_DIR}}/logs\"\nchown -R 1001:1001 \"{{SERVER_DIR}}\" || true\nchmod -R 777 \"{{SERVER_DIR}}\" || true\n\n\necho '[Catalyst] Installation complete!'\n",
   "supportedPorts": [
     25565
   ],

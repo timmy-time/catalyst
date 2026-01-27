@@ -1,4 +1,4 @@
-name: CI/CD - Aero Agent
+name: CI/CD - Catalyst Agent
 
 on:
   push:
@@ -20,16 +20,16 @@ jobs:
           override: true
 
       - name: Run cargo check
-        run: cargo check --manifest-path aero-agent/Cargo.toml
+        run: cargo check --manifest-path catalyst-agent/Cargo.toml
 
       - name: Run cargo fmt check
-        run: cargo fmt --manifest-path aero-agent/Cargo.toml -- --check
+        run: cargo fmt --manifest-path catalyst-agent/Cargo.toml -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy --manifest-path aero-agent/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path catalyst-agent/Cargo.toml -- -D warnings
 
       - name: Run tests
-        run: cargo test --manifest-path aero-agent/Cargo.toml
+        run: cargo test --manifest-path catalyst-agent/Cargo.toml
 
   build:
     needs: test
@@ -51,11 +51,11 @@ jobs:
 
       - name: Build release
         run: |
-          cd aero-agent
+          cd catalyst-agent
           cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: aero-agent-${{ matrix.target }}
-          path: aero-agent/target/${{ matrix.target }}/release/aero-agent
+          name: catalyst-agent-${{ matrix.target }}
+          path: catalyst-agent/target/${{ matrix.target }}/release/catalyst-agent

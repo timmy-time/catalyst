@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aero E2E Test - REAL Game Server Deployment
+# Catalyst E2E Test - REAL Game Server Deployment
 # This test validates the COMPLETE flow including actual container deployment
 
 set -uo pipefail
@@ -79,8 +79,8 @@ fi
 log_success "✓ nerdctl available"
 
 log_info "Checking if agent is built..."
-if [ ! -f "/root/catalyst3/aero-agent/target/debug/aero-agent" ]; then
-    log_error "Agent not built - run: cd aero-agent && cargo build"
+if [ ! -f "/root/catalyst3/catalyst-agent/target/debug/catalyst-agent" ]; then
+    log_error "Agent not built - run: cd catalyst-agent && cargo build"
     exit 1
 fi
 log_success "✓ Agent binary found"
@@ -168,21 +168,21 @@ else
     log_info "Starting agent for our new node..."
     
     # Start agent in background (simplified - use default config location)
-    cd /root/catalyst3/aero-agent
+    cd /root/catalyst3/catalyst-agent
     
     # Update config file with our node details (quick and dirty)
-    TMP_CONFIG="/tmp/aero-test-config-$$.toml"
+    TMP_CONFIG="/tmp/catalyst-test-config-$$.toml"
     cat > "$TMP_CONFIG" << AGENTEOF
 [server]
 backend_url = "ws://localhost:3000/ws"
 node_id = "$NODE_ID"
 secret = "$NODE_SECRET"
 hostname = "$NODE_HOSTNAME"
-data_dir = "/tmp/aero-data-$$"
+data_dir = "/tmp/catalyst-data-$$"
 
 [containerd]
 socket_path = "/run/containerd/containerd.sock"
-namespace = "aero"
+namespace = "catalyst"
 
 [logging]
 level = "info"
@@ -198,7 +198,7 @@ AGENTEOF
     log_info "Using seeded node: $NODE_ID"
     
     # Start the agent with default config
-    ./target/debug/aero-agent > /tmp/agent-test-$$.log 2>&1 &
+    ./target/debug/catalyst-agent > /tmp/agent-test-$$.log 2>&1 &
     AGENT_PID=$!
     
     log_success "✓ Agent started (PID: $AGENT_PID)"
