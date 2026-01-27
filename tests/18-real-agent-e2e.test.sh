@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aero REAL E2E Test - Complete Agent + API Integration
+# Catalyst REAL E2E Test - Complete Agent + API Integration
 # Tests the FULL stack: API → WebSocket → Agent → Container
 
 set -uo pipefail
@@ -42,7 +42,7 @@ cleanup() {
     fi
     
     # Clean up temp files
-    rm -f /tmp/ws-test-*.log /tmp/agent-test-*.log /tmp/aero-test-config-*.toml
+    rm -f /tmp/ws-test-*.log /tmp/agent-test-*.log /tmp/catalyst-test-config-*.toml
     
     log_success "Cleanup complete"
 }
@@ -55,7 +55,7 @@ print_header "REAL E2E TEST: AGENT + API + WEBSOCKET"
 cat << 'EOF'
 ═══════════════════════════════════════════════════════════════
 
-This test validates the COMPLETE Aero stack with REAL components:
+This test validates the COMPLETE Catalyst stack with REAL components:
 
   ┌─────────────┐     HTTP      ┌─────────────┐
   │  Test       │ ─────────────→│  Backend    │
@@ -80,7 +80,7 @@ This test validates the COMPLETE Aero stack with REAL components:
 Flow:
   1. Register user & get JWT token
   2. Create/use existing node
-  3. Start Aero Agent (connects to backend)
+  3. Start Catalyst Agent (connects to backend)
   4. Create server via API
   5. Send "start" command via WebSocket
   6. Agent receives command, creates container
@@ -119,11 +119,11 @@ fi
 log_success "✓ nerdctl available"
 
 # Check agent binary
-if [ ! -f "/root/catalyst3/aero-agent/target/debug/aero-agent" ]; then
-    log_error "Agent not built - run: cd aero-agent && cargo build"
+if [ ! -f "/root/catalyst3/catalyst-agent/target/debug/catalyst-agent" ]; then
+    log_error "Agent not built - run: cd catalyst-agent && cargo build"
     exit 1
 fi
-log_success "✓ Aero Agent binary found"
+log_success "✓ Catalyst Agent binary found"
 
 ((TESTS_RUN++))
 ((TESTS_PASSED++))
@@ -191,21 +191,21 @@ else
     log_success "✓ Node ID: $NODE_ID"
     
     # Start agent
-    log_info "Test 3.2: Starting Aero Agent..."
+    log_info "Test 3.2: Starting Catalyst Agent..."
     
     # Create agent config
-    AGENT_CONFIG="/tmp/aero-test-config-$$.toml"
+    AGENT_CONFIG="/tmp/catalyst-test-config-$$.toml"
     cat > "$AGENT_CONFIG" << AGENTEOF
 [server]
 backend_url = "ws://localhost:3000/ws"
 node_id = "$NODE_ID"
 secret = "$NODE_SECRET"
 hostname = "$NODE_HOSTNAME"
-data_dir = "/tmp/aero-data-$$"
+data_dir = "/tmp/catalyst-data-$$"
 
 [containerd]
 socket_path = "/run/containerd/containerd.sock"
-namespace = "aero"
+namespace = "catalyst"
 
 [logging]
 level = "info"
@@ -213,8 +213,8 @@ format = "json"
 AGENTEOF
     
     # Start agent with config
-    cd /root/catalyst3/aero-agent
-    AERO_CONFIG_PATH="$AGENT_CONFIG" ./target/debug/aero-agent > /tmp/agent-test-$$.log 2>&1 &
+    cd /root/catalyst3/catalyst-agent
+    CATALYST_CONFIG_PATH="$AGENT_CONFIG" ./target/debug/catalyst-agent > /tmp/agent-test-$$.log 2>&1 &
     AGENT_PID=$!
     
     log_success "✓ Agent started (PID: $AGENT_PID)"
@@ -443,7 +443,7 @@ ${COLOR_CYAN}══════════════════════�
 ${COLOR_GREEN}Components Tested:${COLOR_RESET}
   ✓ Backend API (HTTP)
   ✓ WebSocket Gateway
-  ✓ Aero Agent (Rust)
+  ✓ Catalyst Agent (Rust)
   ✓ Container Runtime (nerdctl)
   ✓ Game Server (Minecraft)
 
@@ -473,7 +473,7 @@ print_test_summary
 if [ $TESTS_FAILED -eq 0 ]; then
     log_success "🎉 COMPLETE E2E TEST: SUCCESS!"
     log_success ""
-    log_success "The ENTIRE Aero stack has been validated:"
+    log_success "The ENTIRE Catalyst stack has been validated:"
     log_success "  → API ✓"
     log_success "  → WebSocket ✓"
     log_success "  → Agent ✓"

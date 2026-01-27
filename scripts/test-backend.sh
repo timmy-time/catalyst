@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Quick test script for Aero Backend
+# Quick test script for Catalyst Backend
 
 set -e
 
 BACKEND_URL="http://localhost:3000"
 
-echo "=== Aero Backend Test Suite ==="
+echo "=== Catalyst Backend Test Suite ==="
 
 # Helper function
 test_endpoint() {

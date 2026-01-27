@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Aero - Complete System Setup Script
+# Catalyst - Complete System Setup Script
 # Run this once on a fresh Ubuntu/Debian server
 
 set -e
 
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║     Aero - Game Server Management System Setup          ║"
-echo "║         https://github.com/aero/aero                    ║"
+echo "║     Catalyst - Game Server Management System Setup          ║"
+echo "║         https://github.com/catalyst/catalyst                    ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 
 # Check if running as root
@@ -73,17 +73,17 @@ wget -q https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSI
 tar xzf /tmp/nerdctl.tar.gz -C /usr/local/bin/
 rm /tmp/nerdctl.tar.gz
 
-# Create aero user
-echo "👤 Creating aero system user..."
-useradd -r -s /bin/false aero || true
+# Create catalyst user
+echo "👤 Creating catalyst system user..."
+useradd -r -s /bin/false catalyst || true
 
 # Create directories
 echo "📁 Creating directories..."
-mkdir -p /opt/aero-agent
-mkdir -p /var/lib/aero
-mkdir -p /var/log/aero
-chown -R aero:aero /var/lib/aero
-chown -R aero:aero /var/log/aero
+mkdir -p /opt/catalyst-agent
+mkdir -p /var/lib/catalyst
+mkdir -p /var/log/catalyst
+chown -R catalyst:catalyst /var/lib/catalyst
+chown -R catalyst:catalyst /var/log/catalyst
 
 # Install Rust (optional, for compiling agent)
 if ! command -v cargo &> /dev/null; then
@@ -103,7 +103,7 @@ echo ""
 echo "✓ System setup complete!"
 echo ""
 echo "Next steps:"
-echo "1. Create a node in the Aero backend"
+echo "1. Create a node in the Catalyst backend"
 echo "2. Generate deployment token"
-echo "3. Run: /opt/aero-agent/deploy-agent.sh <backend_url> <node_id> <secret>"
+echo "3. Run: /opt/catalyst-agent/deploy-agent.sh <backend_url> <node_id> <secret>"
 echo ""

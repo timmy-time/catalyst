@@ -9,13 +9,13 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== AERO E2E TEST ===${NC}\n"
+echo -e "${BLUE}=== CATALYST E2E TEST ===${NC}\n"
 
 # Get auth token
 echo "→ Getting auth token..."
 TOKEN=$(curl -s -X POST "http://localhost:3000/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"email":"e2e-test@aero.local","password":"TestPassword123!"}' \
+  -d '{"email":"e2e-test@catalyst.local","password":"TestPassword123!"}' \
   | jq -r '.data.token')
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then

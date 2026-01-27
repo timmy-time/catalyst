@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Comprehensive test suite for Aero
+# Comprehensive test suite for Catalyst
 
 set -e
 
@@ -9,7 +9,7 @@ NODE_ID="test-node-$(date +%s)"
 SERVER_NAME="test-server-$(date +%s)"
 
 echo "╔════════════════════════════════════════════════╗"
-echo "║       Aero - Integration Test Suite            ║"
+echo "║       Catalyst - Integration Test Suite            ║"
 echo "╚════════════════════════════════════════════════╝"
 
 # Setup

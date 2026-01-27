@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# Aero - Project Verification Script
+# Catalyst - Project Verification Script
 # Validates all files exist and provides statistics
 
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║       Aero - Project Build Verification Report               ║"
+echo "║       Catalyst - Project Build Verification Report               ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 
 PROJECT_ROOT="/root/catalyst3"
-BACKEND_DIR="$PROJECT_ROOT/aero-backend"
-AGENT_DIR="$PROJECT_ROOT/aero-agent"
-SHARED_DIR="$PROJECT_ROOT/aero-shared"
+BACKEND_DIR="$PROJECT_ROOT/catalyst-backend"
+AGENT_DIR="$PROJECT_ROOT/catalyst-agent"
+SHARED_DIR="$PROJECT_ROOT/catalyst-shared"
 
 # Counters
 TOTAL_FILES=0

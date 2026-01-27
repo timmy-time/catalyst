@@ -1,10 +1,10 @@
-# Aero E2E Test Suite
+# Catalyst E2E Test Suite
 
-Comprehensive end-to-end testing for the Aero game server management system.
+Comprehensive end-to-end testing for the Catalyst game server management system.
 
 ## Overview
 
-This test suite provides **real** E2E testing that validates the entire Aero stack:
+This test suite provides **real** E2E testing that validates the entire Catalyst stack:
 - Backend REST API (TypeScript/Fastify)
 - WebSocket communication
 - Agent-Backend integration (Rust)
@@ -179,7 +179,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: test-logs
-          path: /tmp/aero-tests/
+          path: /tmp/catalyst-tests/
 ```
 
 ### Docker-based Testing
@@ -201,7 +201,7 @@ docker run --rm \
 ```bash
 cd /root/catalyst3
 docker-compose up -d  # PostgreSQL + Redis
-cd aero-backend
+cd catalyst-backend
 npm install
 npm run db:push
 npm run db:seed
@@ -211,9 +211,9 @@ npm run dev  # Or: npm start for production build
 ### 2. Build Agent (for E2E tests)
 
 ```bash
-cd /root/catalyst3/aero-agent
+cd /root/catalyst3/catalyst-agent
 cargo build --release
-# Binary: ./target/release/aero-agent
+# Binary: ./target/release/catalyst-agent
 ```
 
 ### 3. Verify Setup
@@ -235,17 +235,17 @@ cd /root/catalyst3/tests
 ### View Test Logs
 
 ```bash
-# All logs are saved to /tmp/aero-tests/
-ls -la /tmp/aero-tests/
+# All logs are saved to /tmp/catalyst-tests/
+ls -la /tmp/catalyst-tests/
 
 # View specific test log
-cat /tmp/aero-tests/01-auth.test.sh.log
+cat /tmp/catalyst-tests/01-auth.test.sh.log
 
 # View backend logs
-cat /tmp/aero-backend-test.log
+cat /tmp/catalyst-backend-test.log
 
 # View agent logs
-cat /tmp/aero-agent-test.log
+cat /tmp/catalyst-agent-test.log
 ```
 
 ### Run Single Test With Verbose Output
@@ -279,7 +279,7 @@ curl -v http://localhost:3000/health
 curl http://localhost:3000/health
 
 # Start backend
-cd /root/catalyst3/aero-backend
+cd /root/catalyst3/catalyst-backend
 npm run dev
 ```
 
@@ -293,7 +293,7 @@ docker ps | grep postgres
 docker-compose restart postgres
 
 # Reset database
-cd aero-backend
+cd catalyst-backend
 npm run db:push
 npm run db:seed
 ```
@@ -302,10 +302,10 @@ npm run db:seed
 
 ```bash
 # Check if agent binary exists
-ls -la /root/catalyst3/aero-agent/target/release/aero-agent
+ls -la /root/catalyst3/catalyst-agent/target/release/catalyst-agent
 
 # Rebuild agent
-cd /root/catalyst3/aero-agent
+cd /root/catalyst3/catalyst-agent
 cargo build --release
 
 # Check containerd
@@ -415,15 +415,15 @@ When adding tests:
 
 ## License
 
-MIT - Same as Aero project
+MIT - Same as Catalyst project
 
 ## Support
 
 For issues or questions:
-- Check test logs in `/tmp/aero-tests/`
+- Check test logs in `/tmp/catalyst-tests/`
 - Review backend/agent logs
 - Verify services are running
-- Consult main Aero documentation in `/root/catalyst3/`
+- Consult main Catalyst documentation in `/root/catalyst3/`
 
 ---
 

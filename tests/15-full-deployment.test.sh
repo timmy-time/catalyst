@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aero E2E Test Suite - Full Game Server Deployment Workflow
+# Catalyst E2E Test Suite - Full Game Server Deployment Workflow
 # Tests complete end-to-end flow: User -> Node -> Server -> Container Deployment
 
 set -uo pipefail  # Removed -e to prevent premature exit
@@ -319,7 +319,7 @@ if [ "$IS_ONLINE" = "true" ]; then
 else
     log_warning "⚠ Node is OFFLINE - agent needs to be started"
     log_warning "  To deploy containers, start agent with:"
-    log_warning "  cd aero-agent && cargo run -- --config config.toml"
+    log_warning "  cd catalyst-agent && cargo run -- --config config.toml"
     log_warning "  (Agent will connect using node secret: ${NODE_SECRET:0:16}...)"
 fi
 
@@ -346,7 +346,7 @@ ${COLOR_GREEN}✓${COLOR_RESET} Network port: ${SERVER_PORT}
 ${COLOR_YELLOW}Next Steps for Full Container Deployment:${COLOR_RESET}
 
 1. ${COLOR_CYAN}Start the Agent${COLOR_RESET} (if not already running):
-   cd aero-agent
+   cd catalyst-agent
    cargo run -- --config config.toml
    
 2. ${COLOR_CYAN}Agent Configuration${COLOR_RESET}:

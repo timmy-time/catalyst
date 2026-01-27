@@ -1,4 +1,4 @@
-name: CI/CD - Aero Backend
+name: CI/CD - Catalyst Backend
 
 on:
   push:
@@ -65,5 +65,5 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./aero-backend
-          tags: aero:latest
+          context: ./catalyst-backend
+          tags: catalyst:latest

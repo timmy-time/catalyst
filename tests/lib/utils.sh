@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Aero E2E Test Utilities Library
+# Catalyst E2E Test Utilities Library
 # Provides common functions for all test suites
 
 # Colors for output
@@ -273,13 +273,13 @@ wait_for_condition() {
 
 # Cleanup helpers
 cleanup_docker_containers() {
-    local pattern="${1:-aero-test-}"
+    local pattern="${1:-catalyst-test-}"
     log_info "Cleaning up Docker containers matching: $pattern"
     docker ps -a --filter "name=$pattern" -q | xargs -r docker rm -f 2>/dev/null || true
 }
 
 cleanup_nerdctl_containers() {
-    local pattern="${1:-aero-test-}"
+    local pattern="${1:-catalyst-test-}"
     log_info "Cleaning up nerdctl containers matching: $pattern"
     sudo nerdctl ps -a --filter "name=$pattern" -q | xargs -r sudo nerdctl rm -f 2>/dev/null || true
 }
@@ -357,7 +357,7 @@ print_test_summary() {
 # Database helpers
 reset_test_database() {
     log_info "Resetting test database..."
-    cd /root/catalyst3/aero-backend
+    cd /root/catalyst3/catalyst-backend
     npm run db:push --force-reset > /dev/null 2>&1
     npm run db:seed > /dev/null 2>&1
     log_success "Database reset complete"
@@ -366,21 +366,21 @@ reset_test_database() {
 # Service management
 start_backend_test_mode() {
     log_info "Starting backend in test mode..."
-    cd /root/catalyst3/aero-backend
-    NODE_ENV=test npm run dev > /tmp/aero-backend-test.log 2>&1 &
+    cd /root/catalyst3/catalyst-backend
+    NODE_ENV=test npm run dev > /tmp/catalyst-backend-test.log 2>&1 &
     local pid=$!
-    echo $pid > /tmp/aero-backend-test.pid
+    echo $pid > /tmp/catalyst-backend-test.pid
     
     wait_for_service "${BACKEND_URL}/health" 30
     return $?
 }
 
 stop_backend_test_mode() {
-    if [ -f /tmp/aero-backend-test.pid ]; then
-        local pid=$(cat /tmp/aero-backend-test.pid)
+    if [ -f /tmp/catalyst-backend-test.pid ]; then
+        local pid=$(cat /tmp/catalyst-backend-test.pid)
         log_info "Stopping backend (PID: $pid)..."
         kill $pid 2>/dev/null || true
-        rm -f /tmp/aero-backend-test.pid
+        rm -f /tmp/catalyst-backend-test.pid
     fi
 }
 
@@ -389,10 +389,10 @@ start_agent_test_mode() {
     local node_secret="$2"
     
     log_info "Starting agent in test mode..."
-    cd /root/catalyst3/aero-agent
+    cd /root/catalyst3/catalyst-agent
     
     # Create test config
-    cat > /tmp/aero-agent-test.toml <<EOF
+    cat > /tmp/catalyst-agent-test.toml <<EOF
 node_id = "$node_id"
 node_secret = "$node_secret"
 backend_url = "${BACKEND_WS_URL}"
@@ -400,20 +400,20 @@ health_port = 8080
 log_level = "info"
 EOF
     
-    sudo RUST_LOG=info ./target/release/aero-agent --config /tmp/aero-agent-test.toml > /tmp/aero-agent-test.log 2>&1 &
+    sudo RUST_LOG=info ./target/release/catalyst-agent --config /tmp/catalyst-agent-test.toml > /tmp/catalyst-agent-test.log 2>&1 &
     local pid=$!
-    echo $pid > /tmp/aero-agent-test.pid
+    echo $pid > /tmp/catalyst-agent-test.pid
     
     sleep 3
     log_success "Agent started (PID: $pid)"
 }
 
 stop_agent_test_mode() {
-    if [ -f /tmp/aero-agent-test.pid ]; then
-        local pid=$(cat /tmp/aero-agent-test.pid)
+    if [ -f /tmp/catalyst-agent-test.pid ]; then
+        local pid=$(cat /tmp/catalyst-agent-test.pid)
         log_info "Stopping agent (PID: $pid)..."
         sudo kill $pid 2>/dev/null || true
-        rm -f /tmp/aero-agent-test.pid
+        rm -f /tmp/catalyst-agent-test.pid
     fi
 }
 

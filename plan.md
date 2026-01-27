@@ -1,4 +1,4 @@
-# Aero Backend Completion Plan
+# Catalyst Backend Completion Plan
 **Goal:** Complete backend implementation to support full-featured frontend for Pterodactyl Wings replacement
 
 **Last Updated:** January 24, 2026  
@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-Aero aims to replace Pterodactyl Wings as a modern, containerized server management system. The current implementation has:
+Catalyst aims to replace Pterodactyl Wings as a modern, containerized server management system. The current implementation has:
 - ✅ **Complete**: Core infrastructure (auth, nodes, templates, WebSocket gateway, RBAC)
 - ✅ **Complete**: Agent with container lifecycle management via containerd
 - ✅ **Complete**: Server state machine and lifecycle management
@@ -143,7 +143,7 @@ Before building the frontend, the backend must support all essential Wings featu
   - ✅ **Separate stdout/stderr streaming** ✨ NEW
   - ✅ **Auto-spawns log streamer on server start** ✨ NEW
   - **Endpoint:** `GET /api/servers/:id/logs?lines=100&stream=stdout`
-  - **Files:** `src/routes/servers.ts`, `src/websocket/gateway.ts`, `aero-agent/src/websocket_handler.rs`
+  - **Files:** `src/routes/servers.ts`, `src/websocket/gateway.ts`, `catalyst-agent/src/websocket_handler.rs`
   
 - [x] **1.4** Server installation flow ✅
   - ✅ Execute template install scripts (agent handles)
@@ -152,7 +152,7 @@ Before building the frontend, the backend must support all essential Wings featu
   - ✅ **Handle installation failures with error reporting** ✨ NEW
   - ✅ **Update server state to "installing" during install** ✨ NEW
   - ✅ **Rollback state to "stopped" on failure** ✨ NEW
-  - **Files:** `aero-agent/src/websocket_handler.rs`
+  - **Files:** `catalyst-agent/src/websocket_handler.rs`
 
 ### Phase 2: Resource Monitoring & Health ✅ **COMPLETE (80%)**
 - [x] **2.1** Per-server resource tracking ✅
@@ -578,7 +578,7 @@ model Webhook {
 
 ## Dependencies to Add
 
-### Backend (aero-backend/package.json)
+### Backend (catalyst-backend/package.json)
 ```json
 {
   "@fastify/multipart": "^8.0.0",       // ✅ INSTALLED - File uploads
@@ -593,7 +593,7 @@ model Webhook {
 
 **Note:** @fastify/cors already installed ✅
 
-### Agent (aero-agent/Cargo.toml)
+### Agent (catalyst-agent/Cargo.toml)
 ```toml
 [dependencies]
 tar = "0.4"              # Backup creation

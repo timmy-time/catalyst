@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # ============================================================================
-# Aero Platform - Complete End-to-End Integration Test
+# Catalyst Platform - Complete End-to-End Integration Test
 # ============================================================================
-# This script performs a REAL end-to-end test of the Aero platform:
+# This script performs a REAL end-to-end test of the Catalyst platform:
 # - Creates a user and logs in
 # - Creates a test server
 # - Starts the server and monitors state transitions
@@ -25,7 +25,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 BACKEND_URL="http://localhost:3000"
-TEST_EMAIL="e2e-test@aero.local"
+TEST_EMAIL="e2e-test@catalyst.local"
 TEST_PASSWORD="TestPassword123!"
 NODE_ID="cmkspe7nu0002sw3chd4f3xru"  # From your existing setup
 TEMPLATE_ID=""
@@ -101,7 +101,7 @@ test_prerequisites() {
     if curl -s "$BACKEND_URL/health" > /dev/null 2>&1; then
         print_success "Backend is running"
     else
-        print_error "Backend is not running. Start it with: cd aero-backend && npm run dev"
+        print_error "Backend is not running. Start it with: cd catalyst-backend && npm run dev"
         exit 1
     fi
     
@@ -197,7 +197,7 @@ test_node_status() {
     if [ "$NODE_ONLINE" == "true" ]; then
         print_success "Agent is connected to backend"
     else
-        print_error "Agent is not connected. Start it with: cd aero-agent && ./target/release/aero-agent"
+        print_error "Agent is not connected. Start it with: cd catalyst-agent && ./target/release/catalyst-agent"
         exit 1
     fi
 }
@@ -248,7 +248,7 @@ setup_test_data() {
                 "name": "E2E Test Template",
                 "description": "Template for E2E testing",
                 "dockerImage": "alpine:latest",
-                "startCommand": "sh -c \"while true; do echo Hello from Aero E2E test; sleep 5; done\"",
+                "startCommand": "sh -c \"while true; do echo Hello from Catalyst E2E test; sleep 5; done\"",
                 "stopCommand": "kill 1",
                 "ports": [{"internal": 8080, "external": 25565}],
                 "environment": {
@@ -566,7 +566,7 @@ main() {
     echo -e "${GREEN}"
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║                                                                ║"
-    echo "║           Aero Platform - E2E Integration Test                ║"
+    echo "║           Catalyst Platform - E2E Integration Test                ║"
     echo "║                                                                ║"
     echo "║  This test will verify complete backend ↔ agent integration   ║"
     echo "║                                                                ║"
@@ -605,7 +605,7 @@ main() {
     echo "║  Resource Monitoring: WORKING                                  ║"
     echo "║  Task Scheduling: WORKING                                      ║"
     echo "║                                                                ║"
-    echo "║  🎉 Aero Platform is Production-Ready! 🎉                     ║"
+    echo "║  🎉 Catalyst Platform is Production-Ready! 🎉                     ║"
     echo "║                                                                ║"
     echo "╚════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}\n"

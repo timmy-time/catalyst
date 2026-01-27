@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Aero E2E Test Suite - Master Test Runner
+# Catalyst E2E Test Suite - Master Test Runner
 # Runs all test suites in order and generates report
 
 set -e
@@ -82,7 +82,7 @@ done
 echo ""
 echo -e "${BOLD}${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${CYAN}║                                                            ║${NC}"
-echo -e "${BOLD}${CYAN}║          AERO E2E TEST SUITE - COMPREHENSIVE               ║${NC}"
+echo -e "${BOLD}${CYAN}║          CATALYST E2E TEST SUITE - COMPREHENSIVE               ║${NC}"
 echo -e "${BOLD}${CYAN}║                                                            ║${NC}"
 echo -e "${BOLD}${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -108,7 +108,7 @@ fi
 log_success "Backend is ready"
 
 log_info "Checking database..."
-cd /root/catalyst3/aero-backend
+cd /root/catalyst3/catalyst-backend
 if ! npm run db:push > /dev/null 2>&1; then
     log_error "Database connection failed"
     exit 1

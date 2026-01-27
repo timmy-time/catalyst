@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Test script for Aero Backend
+# Test script for Catalyst Backend
 
 BASE_URL="http://localhost:3000"
 TOKEN=""
 
-echo "🧪 Aero Backend API Test Suite"
+echo "🧪 Catalyst Backend API Test Suite"
 echo "================================"
 echo ""
 
