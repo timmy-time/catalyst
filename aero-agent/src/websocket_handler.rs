@@ -188,6 +188,7 @@ impl WebSocketHandler {
             Some("delete_backup") => self.handle_delete_backup(&msg, write).await?,
             Some("download_backup") => self.handle_download_backup(&msg, write).await?,
             Some("resize_storage") => self.handle_resize_storage(&msg, write).await?,
+            Some("resume_console") => self.resume_console(&msg).await?,
             Some("node_handshake_response") => {
                 info!("Handshake accepted by backend");
             }
@@ -230,6 +231,31 @@ impl WebSocketHandler {
                 )))
             }
         }
+
+        Ok(())
+    }
+
+    async fn resume_console(&self, msg: &Value) -> AgentResult<()> {
+        let server_id = msg["serverId"].as_str().ok_or_else(|| {
+            AgentError::InvalidRequest("Missing serverId".to_string())
+        })?;
+        let server_uuid = msg["serverUuid"].as_str().ok_or_else(|| {
+            AgentError::InvalidRequest("Missing serverUuid".to_string())
+        })?;
+
+        if !self.runtime.is_container_running(server_uuid).await.unwrap_or(false) {
+            debug!("Resume console skipped; container not running: {}", server_uuid);
+            return Ok(());
+        }
+
+        let _ = self.runtime.send_input(server_uuid, "\n").await;
+        self.spawn_log_stream(server_id, server_uuid);
+        self.emit_console_output(
+            server_id,
+            "system",
+            "[Aero] Console reattached after agent restart.\n",
+        )
+        .await?;
 
         Ok(())
     }

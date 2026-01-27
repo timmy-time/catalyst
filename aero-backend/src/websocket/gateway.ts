@@ -104,6 +104,8 @@ export class WebSocketGateway {
         })
       );
 
+      await this.resumeConsoleStreams(node.id);
+
       socket.socket.on("message", (data: any) => this.handleAgentMessage(node.id, data));
       socket.socket.on("close", () => {
         this.agents.delete(node.id);
@@ -116,6 +118,42 @@ export class WebSocketGateway {
     } catch (err) {
       this.logger.error(err, "Error in agent connection");
       socket.end();
+    }
+  }
+
+  private async resumeConsoleStreams(nodeId: string) {
+    try {
+      const servers = await this.prisma.server.findMany({
+        where: {
+          nodeId,
+          status: { in: ["running", "starting"] },
+        },
+        select: {
+          id: true,
+          uuid: true,
+        },
+      });
+
+      if (!servers.length) {
+        return;
+      }
+
+      const agent = this.agents.get(nodeId);
+      if (!agent || agent.socket.socket.readyState !== 1) {
+        return;
+      }
+
+      for (const server of servers) {
+        agent.socket.socket.send(
+          JSON.stringify({
+            type: "resume_console",
+            serverId: server.id,
+            serverUuid: server.uuid,
+          })
+        );
+      }
+    } catch (err) {
+      this.logger.error(err, "Failed to resume console streams");
     }
   }
 
