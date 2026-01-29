@@ -41,7 +41,7 @@ impl AgentConfig {
         Ok(Self {
             server: ServerConfig {
                 backend_url: std::env::var("BACKEND_URL")
-                    .unwrap_or_else(|_| "ws://localhost:3000".to_string()),
+                    .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string()),
                 node_id: std::env::var("NODE_ID").map_err(|_| "NODE_ID not set".to_string())?,
                 secret: std::env::var("NODE_SECRET")
                     .map_err(|_| "NODE_SECRET not set".to_string())?,
