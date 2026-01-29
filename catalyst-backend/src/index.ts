@@ -359,7 +359,6 @@ async function bootstrap() {
       const baseUrl = `${request.protocol}://${request.headers.host}`;
       const script = generateDeploymentScript(
         baseUrl,
-        deployToken.node.publicAddress,
         deployToken.node.id,
         deployToken.secret,
         deployToken.node.hostname
@@ -402,7 +401,6 @@ async function bootstrap() {
 
 function generateDeploymentScript(
   backendUrl: string,
-  backendAddress: string,
   nodeId: string,
   secret: string,
   hostName: string
@@ -412,6 +410,21 @@ set -e
 
 # Catalyst Agent Auto-Installer
 echo "Installing Catalyst Agent..."
+
+# Resolve backend URLs for download + WebSocket
+BACKEND_HTTP_URL="${backendUrl}"
+BACKEND_WS_URL="$BACKEND_HTTP_URL"
+if [[ "$BACKEND_WS_URL" == https://* ]]; then
+  BACKEND_WS_URL="wss://$(echo "$BACKEND_WS_URL" | sed 's#^https://##')"
+elif [[ "$BACKEND_WS_URL" == http://* ]]; then
+  BACKEND_WS_URL="ws://$(echo "$BACKEND_WS_URL" | sed 's#^http://##')"
+fi
+if [[ "$BACKEND_WS_URL" != */ws ]]; then
+  BACKEND_WS_URL="$(echo "$BACKEND_WS_URL" | sed 's#/*$##')/ws"
+fi
+if [[ "$BACKEND_HTTP_URL" == *"/ws" ]]; then
+  BACKEND_HTTP_URL="$(echo "$BACKEND_HTTP_URL" | sed 's#/ws$##')"
+fi
 
 # Install dependencies
 detect_pkg_manager() {
@@ -466,13 +479,13 @@ cd /opt/catalyst-agent
 
 # Download agent binary
 echo "Downloading Catalyst Agent binary..."
-curl -fsSL "${backendUrl}/api/agent/download" -o /opt/catalyst-agent/catalyst-agent
+curl -fsSL "$BACKEND_HTTP_URL/api/agent/download" -o /opt/catalyst-agent/catalyst-agent
 chmod +x /opt/catalyst-agent/catalyst-agent
 
 # Create config file (overwrite on install/reinstall)
 cat > /opt/catalyst-agent/config.toml << EOF
 [server]
-backend_url = "ws://${backendAddress}"
+backend_url = "$BACKEND_WS_URL"
 node_id = "${nodeId}"
 secret = "${secret}"
 hostname = "${hostName}"

@@ -97,6 +97,7 @@ impl SystemSetup {
             .success()
         {
             warn!("Installing nerdctl...");
+            Self::ensure_download_tools(pkg_manager).await?;
             Self::install_nerdctl().await?;
         }
 
@@ -140,9 +141,62 @@ impl SystemSetup {
         Ok(())
     }
 
+    /// Ensure download/extract tools are available
+    async fn ensure_download_tools(
+        pkg_manager: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let has_curl = Command::new("which").arg("curl").output()?.status.success();
+        let has_tar = Command::new("which").arg("tar").output()?.status.success();
+        let has_gzip = Command::new("which").arg("gzip").output()?.status.success();
+
+        if has_curl && has_tar && has_gzip {
+            info!("✓ Download tools already installed");
+            return Ok(());
+        }
+
+        warn!("Download tools missing, installing...");
+
+        match pkg_manager {
+            "apk" => {
+                Self::run_command("apk", &["add", "--no-cache", "curl", "tar", "gzip"])?;
+            }
+            "apt" => {
+                Self::run_command("apt-get", &["update", "-qq"])?;
+                Self::run_command("apt-get", &["install", "-y", "-qq", "curl", "tar", "gzip"])?;
+            }
+            "yum" | "dnf" => {
+                Self::run_command(pkg_manager, &["install", "-y", "curl", "tar", "gzip"])?;
+            }
+            "pacman" => {
+                Self::run_command("pacman", &["-S", "--noconfirm", "curl", "tar", "gzip"])?;
+            }
+            "zypper" => {
+                Self::run_command(
+                    "zypper",
+                    &["--non-interactive", "install", "curl", "tar", "gzip"],
+                )?;
+            }
+            _ => {
+                warn!("Automatic installation not supported for {}", pkg_manager);
+                return Err(format!(
+                    "Please install curl, tar, and gzip manually for {}",
+                    pkg_manager
+                )
+                .into());
+            }
+        }
+
+        info!("✓ Download tools installed");
+        Ok(())
+    }
+
     /// Install nerdctl from GitHub releases
     async fn install_nerdctl() -> Result<(), Box<dyn std::error::Error>> {
-        let arch = std::env::consts::ARCH;
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            other => other,
+        };
         let version = "1.7.6"; // Update as needed
 
         let url = format!(
