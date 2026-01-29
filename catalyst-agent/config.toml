@@ -29,7 +29,7 @@ namespace = "catalyst"
 
 [logging]
 # Log level: trace, debug, info, warn, error
-level = "debug"
+level = "info"
 
 # Log format: json or text
 format = "json"
