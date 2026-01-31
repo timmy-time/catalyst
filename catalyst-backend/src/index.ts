@@ -341,7 +341,7 @@ async function bootstrap() {
           }
         });
         const body =
-          request.method === "GET" || request.method === "HEAD" || request.body == null
+          request.method === "GET" || request.method === "HEAD" || request.body === null
             ? undefined
             : typeof request.body === "string"
               ? request.body
@@ -351,7 +351,7 @@ async function bootstrap() {
         const req = new Request(url.toString(), {
           method: request.method,
           headers,
-          ...(body ? { body } : {}),
+          ...(body ? { body: Buffer.isBuffer(body) ? body.toString() : body } : {}),
         });
         const response = await auth.handler(req);
         reply.status(response.status);
