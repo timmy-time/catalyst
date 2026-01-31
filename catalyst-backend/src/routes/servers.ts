@@ -233,13 +233,13 @@ export async function serverRoutes(app: FastifyInstance) {
   const execFileAsync = promisify(execFile);
   const serverDataRoot = process.env.SERVER_DATA_PATH || "/tmp/catalyst-servers";
   let fileRateLimitMax = 30;
-  const modManagerProviders = new Map(
+  const modManagerProviders = new Map<string, string>(
     [
       ["curseforge", path.resolve(__dirname, "../mod-manager/curseforge.json")],
       ["modrinth", path.resolve(__dirname, "../mod-manager/modrinth.json")],
     ] as const
   );
-  const pluginManagerProviders = new Map(
+  const pluginManagerProviders = new Map<string, string>(
     [
       ["modrinth", path.resolve(__dirname, "../mod-manager/modrinth.json")],
       ["spigot", path.resolve(__dirname, "../mod-manager/spigot.json")],
@@ -1716,7 +1716,10 @@ export async function serverRoutes(app: FastifyInstance) {
             .status(downloadResponse.status)
             .send({ error: `Download failed: ${body}` });
         }
-        await pipeline(downloadResponse.body, createWriteStream(resolvedPath));
+        await pipeline(
+          downloadResponse.body as unknown as NodeJS.ReadableStream,
+          createWriteStream(resolvedPath)
+        );
         await prisma.auditLog.create({
           data: {
             userId,
@@ -2024,7 +2027,10 @@ export async function serverRoutes(app: FastifyInstance) {
             .status(downloadResponse.status)
             .send({ error: `Download failed: ${body}` });
         }
-        await pipeline(downloadResponse.body, createWriteStream(resolvedPath));
+        await pipeline(
+          downloadResponse.body as unknown as NodeJS.ReadableStream,
+          createWriteStream(resolvedPath)
+        );
         await prisma.auditLog.create({
           data: {
             userId,
