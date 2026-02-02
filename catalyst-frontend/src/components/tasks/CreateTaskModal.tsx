@@ -15,29 +15,72 @@ export const actionOptions: Array<{ value: Task['action']; label: string }> = [
 function CreateTaskModal({ serverId, disabled = false }: { serverId: string; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [repeat, setRepeat] = useState<'minute' | 'hour' | 'daily' | 'weekly' | 'monthly'>('daily');
+  const [startDate, setStartDate] = useState(() => {
+    const now = new Date();
+    now.setMinutes(0, 0, 0);
+    now.setHours(now.getHours() + 1);
+    return now.toISOString().slice(0, 16);
+  });
+  const [weekday, setWeekday] = useState('0');
   const [action, setAction] = useState<Task['action']>('restart');
-  const [schedule, setSchedule] = useState('0 3 * * *');
   const [command, setCommand] = useState('');
   const queryClient = useQueryClient();
 
+  const timezoneLabel = useMemo(() => {
+    try {
+      const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+        .formatToParts(new Date());
+      return parts.find((part) => part.type === 'timeZoneName')?.value ?? '';
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const buildCron = (isoValue: string, cadence: typeof repeat, dayOfWeek: string) => {
+    const base = new Date(isoValue);
+    if (Number.isNaN(base.getTime())) return '';
+    if (cadence === 'minute') return '* * * * *';
+    if (cadence === 'hour') return `${base.getUTCMinutes()} * * * *`;
+    if (cadence === 'daily') return `${base.getUTCMinutes()} ${base.getUTCHours()} * * *`;
+    if (cadence === 'weekly') {
+      const targetWeekday = Number(dayOfWeek);
+      const currentWeekday = base.getDay();
+      const delta = (targetWeekday - currentWeekday + 7) % 7;
+      const target = new Date(base);
+      target.setDate(base.getDate() + delta);
+      return `${target.getUTCMinutes()} ${target.getUTCHours()} * * ${target.getUTCDay()}`;
+    }
+    return `${base.getUTCMinutes()} ${base.getUTCHours()} ${base.getUTCDate()} * *`;
+  };
+
   const mutation = useMutation({
-    mutationFn: () =>
-      tasksApi.create(serverId, {
+    mutationFn: () => {
+      const schedule = buildCron(startDate, repeat, weekday);
+      if (!schedule) {
+        throw new Error('Invalid start time');
+      }
+      return tasksApi.create(serverId, {
         name: name.trim(),
-        description: description.trim() || undefined,
         action,
-        schedule: schedule.trim(),
+        schedule,
         payload: action === 'command' && command.trim() ? { command: command.trim() } : undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', serverId] });
       notifySuccess('Task created');
       setOpen(false);
       setName('');
-      setDescription('');
+      setRepeat('daily');
+      setWeekday('0');
+      setStartDate(() => {
+        const now = new Date();
+        now.setMinutes(0, 0, 0);
+        now.setHours(now.getHours() + 1);
+        return now.toISOString().slice(0, 16);
+      });
       setAction('restart');
-      setSchedule('0 3 * * *');
       setCommand('');
     },
     onError: (error: any) => {
@@ -47,10 +90,11 @@ function CreateTaskModal({ serverId, disabled = false }: { serverId: string; dis
   });
 
   const disableSubmit = useMemo(() => {
-    if (!name.trim() || !schedule.trim()) return true;
+    if (!name.trim()) return true;
+    if (!startDate) return true;
     if (action === 'command' && !command.trim()) return true;
     return mutation.isPending || disabled;
-  }, [action, command, name, schedule, mutation.isPending, disabled]);
+  }, [action, command, name, startDate, mutation.isPending, disabled]);
 
   return (
     <div>
@@ -87,15 +131,6 @@ function CreateTaskModal({ serverId, disabled = false }: { serverId: string; dis
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Description (optional)</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  placeholder="Restart to apply updates"
-                />
-              </label>
-              <label className="block space-y-1">
                 <span className="text-slate-500 dark:text-slate-400">Action</span>
                 <select
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
@@ -121,17 +156,51 @@ function CreateTaskModal({ serverId, disabled = false }: { serverId: string; dis
                 </label>
               ) : null}
               <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Schedule (cron)</span>
+                <span className="text-slate-500 dark:text-slate-400">Start time</span>
                 <input
+                  type="datetime-local"
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  value={schedule}
-                  onChange={(event) => setSchedule(event.target.value)}
-                  placeholder="0 3 * * *"
+                  value={startDate}
+                  onChange={(event) => setStartDate(event.target.value)}
                 />
-                <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
-                  Example: 0 3 * * * runs daily at 3 AM.
+                <span className="text-xs text-slate-500 dark:text-slate-500">
+                  {timezoneLabel
+                    ? `Times are interpreted using your local timezone (${timezoneLabel}).`
+                    : 'Times are interpreted using your local timezone.'}
                 </span>
               </label>
+              <label className="block space-y-1">
+                <span className="text-slate-500 dark:text-slate-400">Repeat</span>
+                <select
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                  value={repeat}
+                  onChange={(event) => setRepeat(event.target.value as typeof repeat)}
+                >
+                  <option value="minute">Every minute</option>
+                  <option value="hour">Every hour</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              {repeat === 'weekly' ? (
+                <label className="block space-y-1">
+                  <span className="text-slate-500 dark:text-slate-400">Day of week</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                    value={weekday}
+                    onChange={(event) => setWeekday(event.target.value)}
+                  >
+                    <option value="0">Sunday</option>
+                    <option value="1">Monday</option>
+                    <option value="2">Tuesday</option>
+                    <option value="3">Wednesday</option>
+                    <option value="4">Thursday</option>
+                    <option value="5">Friday</option>
+                    <option value="6">Saturday</option>
+                  </select>
+                </label>
+              ) : null}
             </div>
             <div className="mt-5 flex justify-end gap-2 text-xs">
               <button
