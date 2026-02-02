@@ -13,8 +13,8 @@ function Header() {
     'U';
 
   return (
-    <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 shadow-surface-light transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark">
-      <div className="flex items-center gap-3">
+    <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 shadow-surface-light transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
           onClick={toggleSidebar}
@@ -22,12 +22,15 @@ function Header() {
         >
           {sidebarCollapsed ? 'Expand' : 'Collapse'}
         </button>
-        <Link to="/dashboard" className="flex items-center gap-2 text-lg font-semibold text-slate-900 transition-all duration-300 dark:text-white">
+        <Link
+          to="/dashboard"
+          className="flex min-w-0 items-center gap-2 text-lg font-semibold text-slate-900 transition-all duration-300 dark:text-white"
+        >
           <img src="/logo.png" alt="Catalyst logo" className="h-6 w-6" />
-          Catalyst Control
+          <span className="truncate">Catalyst Control</span>
         </Link>
       </div>
-      <div className="flex items-center gap-4 text-sm text-slate-600 transition-all duration-300 dark:text-slate-300">
+      <div className="flex items-center gap-3 text-sm text-slate-600 transition-all duration-300 dark:text-slate-300">
         <Popover>
           <PopoverTrigger asChild>
             <button

@@ -17,7 +17,7 @@ import FileManager from '../../components/files/FileManager';
 import BackupSection from '../../components/backups/BackupSection';
 import CreateTaskModal from '../../components/tasks/CreateTaskModal';
 import EditTaskModal from '../../components/tasks/EditTaskModal';
-import XtermConsole from '../../components/console/XtermConsole';
+import CustomConsole from '../../components/console/CustomConsole';
 import AlertsPage from '../alerts/AlertsPage';
 import EmptyState from '../../components/shared/EmptyState';
 import { useConsole } from '../../hooks/useConsole';
@@ -109,36 +109,17 @@ function ServerDetailsPage() {
     queryFn: () => serversApi.listInvites(serverId ?? ''),
     enabled: Boolean(serverId),
   });
-  const {
-    entries,
-    send,
-    isLoading: consoleLoading,
-    isError: consoleError,
-    refetch: refetchConsole,
-    clear: clearConsole,
-  } = useConsole(serverId);
-
-  const isSuspended = server?.status === 'suspended';
-  const activeTab = useMemo(() => {
-    const key = tab ?? 'console';
-    return key in tabLabels ? (key as keyof typeof tabLabels) : 'console';
-  }, [tab]);
-
-  const canSend = isConnected && Boolean(serverId) && server?.status === 'running' && !isSuspended;
-  const canManageDatabases =
-    user?.permissions?.includes('*') ||
-    user?.permissions?.includes('admin.read') ||
-    user?.permissions?.includes('database.create') ||
-    user?.permissions?.includes('database.read') ||
-    user?.permissions?.includes('database.rotate') ||
-    user?.permissions?.includes('database.delete') ||
-    Boolean(server && user?.id && server.ownerId === user.id);
-  const databaseAllocation = server?.databaseAllocation ?? 0;
-  const databaseLimitReached =
-    databaseAllocation > 0 && databases.length >= databaseAllocation;
   const [configFiles, setConfigFiles] = useState<ConfigFileState[]>([]);
   const [openConfigIndex, setOpenConfigIndex] = useState(-1);
   const [command, setCommand] = useState('');
+  const [consoleSearch, setConsoleSearch] = useState('');
+  const [consoleScrollback, setConsoleScrollback] = useState(() => {
+    if (typeof window === 'undefined') return 2000;
+    const stored = window.localStorage.getItem('console.scrollback');
+    const parsed = stored ? Number(stored) : 2000;
+    return Number.isFinite(parsed) ? parsed : 2000;
+  });
+  const [consoleAutoScroll, setConsoleAutoScroll] = useState(true);
   const [configSearch, setConfigSearch] = useState('');
   const [databaseHostId, setDatabaseHostId] = useState('');
   const [databaseName, setDatabaseName] = useState('');
@@ -165,6 +146,43 @@ function ServerDetailsPage() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [pluginProvider, setPluginProvider] = useState('modrinth');
+  const {
+    entries,
+    send,
+    isLoading: consoleLoading,
+    isError: consoleError,
+    refetch: refetchConsole,
+    clear: clearConsole,
+  } = useConsole(serverId, {
+    initialLines: consoleScrollback,
+    maxEntries: consoleScrollback,
+  });
+
+  useEffect(() => {
+    if (!serverId) return;
+    refetchConsole().catch(() => {
+      // ignore refetch errors
+    });
+  }, [consoleScrollback, refetchConsole, serverId]);
+
+  const isSuspended = server?.status === 'suspended';
+  const activeTab = useMemo(() => {
+    const key = tab ?? 'console';
+    return key in tabLabels ? (key as keyof typeof tabLabels) : 'console';
+  }, [tab]);
+
+  const canSend = isConnected && Boolean(serverId) && server?.status === 'running' && !isSuspended;
+  const canManageDatabases =
+    user?.permissions?.includes('*') ||
+    user?.permissions?.includes('admin.read') ||
+    user?.permissions?.includes('database.create') ||
+    user?.permissions?.includes('database.read') ||
+    user?.permissions?.includes('database.rotate') ||
+    user?.permissions?.includes('database.delete') ||
+    Boolean(server && user?.id && server.ownerId === user.id);
+  const databaseAllocation = server?.databaseAllocation ?? 0;
+  const databaseLimitReached =
+    databaseAllocation > 0 && databases.length >= databaseAllocation;
   const [pluginQuery, setPluginQuery] = useState('');
   const [selectedPlugin, setSelectedPlugin] = useState<string | null>(null);
   const [selectedPluginVersion, setSelectedPluginVersion] = useState<string>('');
@@ -1238,6 +1256,44 @@ function ServerDetailsPage() {
             </div>
           </div>
           <div className="px-4 py-3">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+                <span>Search</span>
+                <input
+                  className="w-48 bg-transparent text-xs text-slate-900 outline-none dark:text-slate-200"
+                  value={consoleSearch}
+                  onChange={(event) => setConsoleSearch(event.target.value)}
+                  placeholder="Filter output"
+                />
+              </div>
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+                <span>Scrollback</span>
+                <select
+                  className="bg-transparent text-xs text-slate-900 outline-none dark:text-slate-200"
+                  value={consoleScrollback}
+                  onChange={(event) => {
+                    const nextValue = Number(event.target.value);
+                    setConsoleScrollback(nextValue);
+                    if (typeof window !== 'undefined') {
+                      window.localStorage.setItem('console.scrollback', String(nextValue));
+                    }
+                  }}
+                >
+                  <option value={500}>500</option>
+                  <option value={1000}>1000</option>
+                  <option value={2000}>2000</option>
+                  <option value={5000}>5000</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500/30"
+                onClick={() => setConsoleAutoScroll(true)}
+                disabled={consoleAutoScroll}
+              >
+                {consoleAutoScroll ? 'Auto-scroll on' : 'Resume auto-scroll'}
+              </button>
+            </div>
             {consoleLoading ? (
               <div className="mb-2 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">Loading recent logs...</div>
             ) : null}
@@ -1255,7 +1311,13 @@ function ServerDetailsPage() {
                 </div>
               </div>
             ) : null}
-            <XtermConsole entries={entries} />
+            <CustomConsole
+              entries={entries}
+              searchQuery={consoleSearch}
+              scrollback={consoleScrollback}
+              autoScroll={consoleAutoScroll}
+              onUserScroll={() => setConsoleAutoScroll(false)}
+            />
             <form onSubmit={handleSend} className="mt-3 flex items-center gap-3">
               <span className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">&gt;</span>
               <input
