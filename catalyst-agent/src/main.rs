@@ -181,7 +181,7 @@ async fn main() -> AgentResult<()> {
 
     // Run system initialization
     info!("Running system setup and dependency check...");
-    if let Err(e) = SystemSetup::initialize().await {
+    if let Err(e) = SystemSetup::initialize(&config).await {
         warn!("System setup encountered issues: {}", e);
         warn!("Continuing with existing configuration...");
     }

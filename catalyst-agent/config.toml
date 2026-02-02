@@ -27,6 +27,26 @@ socket_path = "/run/containerd/containerd.sock"
 # Containerd namespace for Catalyst containers
 namespace = "catalyst"
 
+[networking]
+# Configure one or more macvlan networks (optional). If omitted, the agent will
+# provision a default mc-lan-static network based on the primary interface.
+#
+# [[networking.networks]]
+# name = "mc-lan-static"
+# interface = "eth0"
+# cidr = "10.5.5.0/24"
+# gateway = "10.5.5.1"
+# range_start = "10.5.5.50"
+# range_end = "10.5.5.200"
+#
+# [[networking.networks]]
+# name = "mc-public"
+# interface = "eth0"
+# cidr = "98.168.52.0/24"
+# gateway = "98.168.52.1"
+# range_start = "98.168.52.50"
+# range_end = "98.168.52.200"
+
 [logging]
 # Log level: trace, debug, info, warn, error
 level = "info"

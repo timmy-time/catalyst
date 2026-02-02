@@ -78,16 +78,25 @@ function DatabasePage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <AdminTabs />
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Database</h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Manage database hosts for server provisioning.
-        </p>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark dark:hover:border-primary-500/30">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Database</h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Manage database hosts for server provisioning.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 dark:border-slate-800 dark:bg-slate-950/60">
+              {databaseHosts.length} hosts
+            </span>
+          </div>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white px-6 py-5 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Database Hosts</h2>
@@ -155,6 +164,15 @@ function DatabasePage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Active hosts</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            View connection details and manage existing database hosts.
+          </p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {isLoading ? (
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-slate-600 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500/30">
@@ -169,7 +187,7 @@ function DatabasePage() {
           databaseHosts.map((dbHostEntry) => (
             <div
               key={dbHostEntry.id}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30"
+              className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:-translate-y-1 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -178,6 +196,9 @@ function DatabasePage() {
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">
                     {dbHostEntry.host}:{dbHostEntry.port}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    User: {dbHostEntry.username}
                   </div>
                 </div>
                 <div className="flex gap-2 text-xs">
@@ -204,7 +225,7 @@ function DatabasePage() {
                 </div>
               </div>
               {dbHostId === dbHostEntry.id ? (
-                <div className="mt-4 space-y-3 text-xs text-slate-500 dark:text-slate-300">
+                <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <label className="block">
                       Name

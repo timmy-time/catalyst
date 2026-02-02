@@ -3,13 +3,14 @@ use std::path::Path;
 use std::process::Command;
 use tracing::{error, info, warn};
 
-use crate::AgentError;
+use crate::{AgentConfig, AgentError};
+use crate::config::CniNetworkConfig;
 
 pub struct SystemSetup;
 
 impl SystemSetup {
     /// Initialize the system with all required dependencies
-    pub async fn initialize() -> Result<(), AgentError> {
+    pub async fn initialize(config: &AgentConfig) -> Result<(), AgentError> {
         info!("🚀 Starting system initialization...");
 
         // 1. Detect package manager
@@ -23,7 +24,7 @@ impl SystemSetup {
         Self::ensure_iproute(&pkg_manager).await?;
 
         // 4. Setup CNI networking only (static host-local IPAM)
-        Self::setup_cni_static_networking().await?;
+        Self::setup_cni_static_networking(config).await?;
 
         info!("✅ System initialization complete!");
         Ok(())
@@ -264,33 +265,66 @@ impl SystemSetup {
     }
 
     /// Setup CNI networking with macvlan and host-local IPAM (static IPs)
-    async fn setup_cni_static_networking() -> Result<(), AgentError> {
+    async fn setup_cni_static_networking(config: &AgentConfig) -> Result<(), AgentError> {
         let cni_dir = "/etc/cni/net.d";
-        let cni_config = format!("{}/mc-lan-static.conflist", cni_dir);
 
         // Create CNI directory if it doesn't exist
         fs::create_dir_all(cni_dir)
             .map_err(|e| AgentError::IoError(format!("Failed to create CNI dir: {}", e)))?;
 
-        // Check if config already exists
-        if Path::new(&cni_config).exists() {
-            info!("✓ CNI static network configuration already exists");
-            return Ok(());
-        }
+        let networks = if config.networking.networks.is_empty() {
+            vec![CniNetworkConfig {
+                name: "mc-lan-static".to_string(),
+                interface: None,
+                cidr: None,
+                gateway: None,
+                range_start: None,
+                range_end: None,
+            }]
+        } else {
+            config.networking.networks.clone()
+        };
 
-        // Detect the primary network interface
-        let interface = Self::detect_network_interface()?;
-        info!("Detected network interface: {}", interface);
+        for network in networks {
+            let cni_config = format!("{}/{}.conflist", cni_dir, network.name);
+            if Path::new(&cni_config).exists() {
+                info!(
+                    "✓ CNI static network configuration already exists for {}",
+                    network.name
+                );
+                continue;
+            }
 
-        let gateway = Self::detect_default_gateway()?;
-        let cidr = Self::detect_interface_cidr(&interface)?;
-        let (range_start, range_end) = Self::cidr_usable_range(&cidr)?;
+            let interface = if let Some(value) = network.interface {
+                value
+            } else {
+                let detected = Self::detect_network_interface()?;
+                info!("Detected network interface: {}", detected);
+                detected
+            };
 
-        // Create macvlan network configuration (host-local IPAM)
-        let config = format!(
-            r#"{{
+            let cidr = match network.cidr.as_ref() {
+                Some(value) => Self::normalize_cidr(value)?,
+                None => Self::detect_interface_cidr(&interface)?,
+            };
+            let (default_start, default_end) = Self::cidr_usable_range(&cidr)?;
+            let range_start = network
+                .range_start
+                .clone()
+                .unwrap_or(default_start);
+            let range_end = network
+                .range_end
+                .clone()
+                .unwrap_or(default_end);
+            let gateway = match network.gateway.as_ref() {
+                Some(value) => value.clone(),
+                None => Self::detect_default_gateway()?,
+            };
+
+            let config = format!(
+                r#"{{
   "cniVersion": "1.0.0",
-  "name": "mc-lan-static",
+  "name": "{}",
   "plugins": [
     {{
       "type": "macvlan",
@@ -313,15 +347,16 @@ impl SystemSetup {
     }}
   ]
 }}"#,
-            interface, cidr, range_start, range_end, gateway
-        );
+                network.name, interface, cidr, range_start, range_end, gateway
+            );
 
-        fs::write(&cni_config, config)
-            .map_err(|e| AgentError::IoError(format!("Failed to write CNI config: {}", e)))?;
-        info!(
-            "✓ Created CNI static network configuration at {}",
-            cni_config
-        );
+            fs::write(&cni_config, config)
+                .map_err(|e| AgentError::IoError(format!("Failed to write CNI config: {}", e)))?;
+            info!(
+                "✓ Created CNI static network configuration at {}",
+                cni_config
+            );
+        }
 
         Ok(())
     }

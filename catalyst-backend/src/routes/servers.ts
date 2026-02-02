@@ -795,7 +795,10 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: "databaseAllocation must be 0 or more" });
       }
 
-      const desiredNetworkMode = networkMode || "mc-lan-static";
+      const desiredNetworkMode =
+        typeof networkMode === "string" && networkMode.trim().length > 0
+          ? networkMode.trim()
+          : "mc-lan-static";
       const hasPrimaryIp = primaryIp !== undefined;
       const normalizedPrimaryIp = typeof primaryIp === "string" ? primaryIp.trim() : null;
       if (allocationId && shouldUseIpam(desiredNetworkMode)) {

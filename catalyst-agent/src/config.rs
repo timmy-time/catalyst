@@ -5,6 +5,8 @@ use std::path::PathBuf;
 pub struct AgentConfig {
     pub server: ServerConfig,
     pub containerd: ContainerdConfig,
+    #[serde(default)]
+    pub networking: NetworkingConfig,
     pub logging: LoggingConfig,
 }
 
@@ -28,6 +30,22 @@ pub struct ContainerdConfig {
 pub struct LoggingConfig {
     pub level: String,
     pub format: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct NetworkingConfig {
+    #[serde(default)]
+    pub networks: Vec<CniNetworkConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CniNetworkConfig {
+    pub name: String,
+    pub interface: Option<String>,
+    pub cidr: Option<String>,
+    pub gateway: Option<String>,
+    pub range_start: Option<String>,
+    pub range_end: Option<String>,
 }
 
 impl AgentConfig {
@@ -59,6 +77,7 @@ impl AgentConfig {
                 namespace: std::env::var("CONTAINERD_NAMESPACE")
                     .unwrap_or_else(|_| "catalyst".to_string()),
             },
+            networking: NetworkingConfig::default(),
             logging: LoggingConfig {
                 level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
                 format: "json".to_string(),
