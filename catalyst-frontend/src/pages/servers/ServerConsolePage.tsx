@@ -11,6 +11,20 @@ const streamStyles: Record<string, string> = {
   stdin: 'text-amber-500',
 };
 
+const timestampPattern = /^\s*(?:\\x07)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s*/;
+const padTwo = (value: number) => String(value).padStart(2, '0');
+const formatTimestamp = (value?: string) => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const hours = padTwo(parsed.getHours());
+  const minutes = padTwo(parsed.getMinutes());
+  const month = padTwo(parsed.getMonth() + 1);
+  const day = padTwo(parsed.getDate());
+  const year = String(parsed.getFullYear());
+  return `${hours}:${minutes} - ${month}-${day}-${year}`;
+};
+
 function ServerConsolePage() {
   const { serverId } = useParams();
   const { data: server } = useServer(serverId);
@@ -123,18 +137,28 @@ function ServerConsolePage() {
           {!isLoading && entries.length === 0 ? (
             <div className="text-slate-500 dark:text-slate-400 dark:text-slate-500">No console output yet.</div>
           ) : (
-            entries.map((entry) => (
-              <div key={entry.id} className="flex gap-3">
-                <span
-                  className={`mt-[2px] min-w-[64px] text-[10px] uppercase tracking-wide ${
-                    streamStyles[entry.stream] ?? 'text-slate-500 dark:text-slate-500'
-                  }`}
-                >
-                  {entry.stream}
-                </span>
-                <span className="whitespace-pre-wrap break-words">{entry.data}</span>
-              </div>
-            ))
+            entries.map((entry) => {
+              const timestampMatch = entry.data.match(timestampPattern);
+              const displayTimestamp = entry.timestamp ?? timestampMatch?.[1];
+              const cleanedData = timestampMatch ? entry.data.replace(timestampPattern, '') : entry.data;
+              return (
+                <div key={entry.id} className="flex gap-3">
+                  <span
+                    className={`mt-[2px] min-w-[64px] text-[10px] uppercase tracking-wide ${
+                      streamStyles[entry.stream] ?? 'text-slate-500 dark:text-slate-500'
+                    }`}
+                  >
+                    {entry.stream}
+                  </span>
+                  {displayTimestamp ? (
+                    <span className="mt-[2px] min-w-[120px] text-xs font-mono text-slate-500 dark:text-slate-400">
+                      {formatTimestamp(displayTimestamp)}
+                    </span>
+                  ) : null}
+                  <span className="whitespace-pre-wrap break-words">{cleanedData}</span>
+                </div>
+              );
+            })
           )}
         </div>
         <form

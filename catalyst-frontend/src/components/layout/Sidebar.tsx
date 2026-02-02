@@ -15,11 +15,11 @@ function Sidebar() {
     user?.permissions?.includes('*') || user?.permissions?.includes('admin.read');
   return (
     <aside
-      className={`flex flex-col border-r border-slate-200 bg-white px-2 py-6 text-sm shadow-surface-light transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark ${
+      className={`flex h-[calc(100vh-72px)] flex-col border-r border-slate-200 bg-white px-2 py-6 text-sm shadow-surface-light transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark ${
         sidebarCollapsed ? 'w-16' : 'w-64'
       }`}
     >
-      <nav className="flex flex-1 flex-col gap-2">
+      <nav className="flex flex-1 flex-col gap-2 overflow-y-auto">
         {links
           .filter((link) => (link.adminOnly ? isAdmin : true))
           .map((link) => (
@@ -41,7 +41,7 @@ function Sidebar() {
             </NavLink>
           ))}
       </nav>
-      <div className="mt-6">
+      <div className="mt-4">
         <button
           type="button"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
