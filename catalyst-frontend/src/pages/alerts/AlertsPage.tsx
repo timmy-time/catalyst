@@ -36,6 +36,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
   const [emailTargets, setEmailTargets] = useState<string[]>(['']);
   const [notifyOwner, setNotifyOwner] = useState(false);
   const [cooldownMinutes, setCooldownMinutes] = useState('5');
+  const [ruleStep, setRuleStep] = useState<'details' | 'conditions' | 'notifications'>('details');
 
   const resetRuleForm = () => {
     setRuleName('');
@@ -51,6 +52,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
     setEmailTargets(['']);
     setNotifyOwner(false);
     setCooldownMinutes('5');
+    setRuleStep('details');
   };
 
   const { data: alertData, isLoading: alertsLoading } = useQuery({
@@ -100,6 +102,25 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
   }, [nodes, ruleTarget, serversData, serverId, showAdminTargets]);
 
   const selectedTargetLabel = targetOptions.find((option) => option.id === ruleTargetId)?.label;
+  const ruleStepOrder = ['details', 'conditions', 'notifications'] as const;
+  const ruleStepIndex = ruleStepOrder.indexOf(ruleStep);
+  const detailsValid = Boolean(ruleName.trim() && (ruleTarget === 'global' || ruleTargetId));
+  const conditionsValid =
+    ruleType === 'resource_threshold'
+      ? Boolean(cpuThreshold || memoryThreshold || diskThreshold)
+      : ruleType === 'node_offline'
+        ? Boolean(offlineThreshold)
+        : true;
+  const notificationsValid = true;
+  const ruleStepValidMap = {
+    details: detailsValid,
+    conditions: conditionsValid,
+    notifications: notificationsValid,
+  } as const;
+  const canNavigateRuleStep = (targetIndex: number) =>
+    targetIndex <= ruleStepIndex ||
+    ruleStepOrder.slice(0, targetIndex).every((key) => ruleStepValidMap[key]);
+  const canGoNextRuleStep = ruleStepValidMap[ruleStep];
 
   const updateTargetValue = (values: string[], index: number, value: string) =>
     values.map((entry, currentIndex) => (currentIndex === index ? value : entry));
@@ -364,6 +385,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
                     onClick={() => {
                       setEditingRule(rule);
                       setShowRuleModal(true);
+                      setRuleStep('details');
                       setRuleName(rule.name);
                       setRuleDescription(rule.description ?? '');
                       setRuleType(rule.type);
@@ -512,222 +534,282 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
               </button>
             </div>
             <div className="space-y-4 px-6 py-4 text-sm text-slate-900 dark:text-slate-100">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Rule name</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={ruleName}
-                    onChange={(event) => setRuleName(event.target.value)}
-                    placeholder="High CPU usage"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Description</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={ruleDescription}
-                    onChange={(event) => setRuleDescription(event.target.value)}
-                    placeholder="Notify when CPU stays high"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Rule type</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={ruleType}
-                    onChange={(event) => setRuleType(event.target.value as AlertType)}
-                  >
-                    {ruleTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Target</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={ruleTarget}
-                    onChange={(event) => setRuleTarget(event.target.value as 'global' | 'server' | 'node')}
-                    disabled={!showAdminTargets}
-                  >
-                    <option value="global">Global</option>
-                    <option value="server">Server</option>
-                    <option value="node">Node</option>
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Target ID</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={ruleTargetId}
-                    onChange={(event) => setRuleTargetId(event.target.value)}
-                    disabled={!showAdminTargets || ruleTarget === 'global'}
-                  >
-                    <option value="">
-                      {ruleTarget === 'global'
-                        ? 'Not required'
-                        : selectedTargetLabel || 'Select target'}
-                    </option>
-                    {targetOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              {ruleType === 'resource_threshold' ? (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-600 dark:text-slate-300">CPU threshold (%)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                      value={cpuThreshold}
-                      onChange={(event) => setCpuThreshold(event.target.value)}
-                    />
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-600 dark:text-slate-300">Memory threshold (%)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                      value={memoryThreshold}
-                      onChange={(event) => setMemoryThreshold(event.target.value)}
-                    />
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-xs text-slate-600 dark:text-slate-300">Disk threshold (%)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                      value={diskThreshold}
-                      onChange={(event) => setDiskThreshold(event.target.value)}
-                    />
-                  </label>
+              <div className="flex gap-4">
+                <div className="w-36 shrink-0 space-y-2">
+                  {ruleStepOrder.map((key, index) => {
+                    const isActive = ruleStep === key;
+                    const canNavigate = canNavigateRuleStep(index);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={!canNavigate}
+                        onClick={() => {
+                          if (canNavigate) setRuleStep(key);
+                        }}
+                        className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-all duration-300 ${
+                          isActive
+                            ? 'border-primary-500 bg-primary-50 text-primary-700 dark:border-primary-400 dark:bg-primary-500/10 dark:text-primary-200'
+                            : 'border-slate-200 text-slate-600 hover:border-primary-200 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30'
+                        }`}
+                      >
+                        <div className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                          Step {index + 1}
+                        </div>
+                        <div className="capitalize">
+                          {key === 'details'
+                            ? 'Details'
+                            : key === 'conditions'
+                              ? 'Conditions'
+                              : 'Notifications'}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : null}
-
-              {ruleType === 'node_offline' ? (
-                <label className="block space-y-1">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Offline threshold (minutes)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                    value={offlineThreshold}
-                    onChange={(event) => setOfflineThreshold(event.target.value)}
-                  />
-                </label>
-              ) : null}
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                    <span>Webhook URLs</span>
-                    <button
-                      type="button"
-                      className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-semibold text-slate-600 dark:text-slate-200 hover:border-slate-500"
-                      onClick={() => setWebhookTargets((current) => [...current, ''])}
-                    >
-                      + Add
-                    </button>
-                  </div>
-                  {webhookTargets.map((value, index) => (
-                    <div key={`webhook-${index}`} className="flex items-center gap-2">
-                      <input
-                        className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
-                        value={value}
-                        onChange={(event) =>
-                          setWebhookTargets((current) => updateTargetValue(current, index, event.target.value))
-                        }
-                        placeholder="https://discord.com/api/webhooks/..."
-                      />
-                      {webhookTargets.length > 1 ? (
-                        <button
-                          type="button"
-                          className="rounded-md border border-rose-700 px-2 py-1 text-[10px] font-semibold text-rose-200 hover:border-rose-500"
-                          onClick={() =>
-                            setWebhookTargets((current) => current.filter((_, currentIndex) => currentIndex !== index))
-                          }
-                        >
-                          Remove
-                        </button>
+                <div className="flex-1 space-y-3">
+                  {ruleStep === 'details' ? (
+                    <>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Rule name</span>
+                          <input
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={ruleName}
+                            onChange={(event) => setRuleName(event.target.value)}
+                            placeholder="High CPU usage"
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Description</span>
+                          <input
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={ruleDescription}
+                            onChange={(event) => setRuleDescription(event.target.value)}
+                            placeholder="Notify when CPU stays high"
+                          />
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Rule type</span>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={ruleType}
+                            onChange={(event) => setRuleType(event.target.value as AlertType)}
+                          >
+                            {ruleTypeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Target</span>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={ruleTarget}
+                            onChange={(event) =>
+                              setRuleTarget(event.target.value as 'global' | 'server' | 'node')
+                            }
+                            disabled={!showAdminTargets}
+                          >
+                            <option value="global">Global</option>
+                            <option value="server">Server</option>
+                            <option value="node">Node</option>
+                          </select>
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Target ID</span>
+                          <select
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={ruleTargetId}
+                            onChange={(event) => setRuleTargetId(event.target.value)}
+                            disabled={!showAdminTargets || ruleTarget === 'global'}
+                          >
+                            <option value="">
+                              {ruleTarget === 'global'
+                                ? 'Not required'
+                                : selectedTargetLabel || 'Select target'}
+                            </option>
+                            {targetOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </>
+                  ) : null}
+                  {ruleStep === 'conditions' ? (
+                    <>
+                      {ruleType === 'resource_threshold' ? (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">CPU threshold (%)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                              value={cpuThreshold}
+                              onChange={(event) => setCpuThreshold(event.target.value)}
+                            />
+                          </label>
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Memory threshold (%)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                              value={memoryThreshold}
+                              onChange={(event) => setMemoryThreshold(event.target.value)}
+                            />
+                          </label>
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-600 dark:text-slate-300">Disk threshold (%)</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                              value={diskThreshold}
+                              onChange={(event) => setDiskThreshold(event.target.value)}
+                            />
+                          </label>
+                        </div>
                       ) : null}
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                    <span>Email recipients</span>
-                    <button
-                      type="button"
-                      className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-primary-500/30"
-                      onClick={() => setEmailTargets((current) => [...current, ''])}
-                    >
-                      + Add
-                    </button>
-                  </div>
-                  {emailTargets.map((value, index) => (
-                    <div key={`email-${index}`} className="flex items-center gap-2">
-                      <input
-                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
-                        value={value}
-                        onChange={(event) =>
-                          setEmailTargets((current) => updateTargetValue(current, index, event.target.value))
-                        }
-                        placeholder="alerts@example.com"
-                      />
-                      {emailTargets.length > 1 ? (
-                        <button
-                          type="button"
-                          className="rounded-md border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
-                          onClick={() =>
-                            setEmailTargets((current) => current.filter((_, currentIndex) => currentIndex !== index))
-                          }
-                        >
-                          Remove
-                        </button>
+                      {ruleType === 'node_offline' ? (
+                        <label className="block space-y-1">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Offline threshold (minutes)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                            value={offlineThreshold}
+                            onChange={(event) => setOfflineThreshold(event.target.value)}
+                          />
+                        </label>
                       ) : null}
-                    </div>
-                  ))}
+                      {ruleType === 'server_crashed' ? (
+                        <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+                          This rule triggers when the server reports a crash event.
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {ruleStep === 'notifications' ? (
+                    <>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                            <span>Webhook URLs</span>
+                            <button
+                              type="button"
+                              className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[10px] font-semibold text-slate-600 dark:text-slate-200 hover:border-slate-500"
+                              onClick={() => setWebhookTargets((current) => [...current, ''])}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                          {webhookTargets.map((value, index) => (
+                            <div key={`webhook-${index}`} className="flex items-center gap-2">
+                              <input
+                                className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100"
+                                value={value}
+                                onChange={(event) =>
+                                  setWebhookTargets((current) =>
+                                    updateTargetValue(current, index, event.target.value),
+                                  )
+                                }
+                                placeholder="https://discord.com/api/webhooks/..."
+                              />
+                              {webhookTargets.length > 1 ? (
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-rose-700 px-2 py-1 text-[10px] font-semibold text-rose-200 hover:border-rose-500"
+                                  onClick={() =>
+                                    setWebhookTargets((current) =>
+                                      current.filter((_, currentIndex) => currentIndex !== index),
+                                    )
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                            <span>Email recipients</span>
+                            <button
+                              type="button"
+                              className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-primary-500/30"
+                              onClick={() => setEmailTargets((current) => [...current, ''])}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                          {emailTargets.map((value, index) => (
+                            <div key={`email-${index}`} className="flex items-center gap-2">
+                              <input
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
+                                value={value}
+                                onChange={(event) =>
+                                  setEmailTargets((current) =>
+                                    updateTargetValue(current, index, event.target.value),
+                                  )
+                                }
+                                placeholder="alerts@example.com"
+                              />
+                              {emailTargets.length > 1 ? (
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
+                                  onClick={() =>
+                                    setEmailTargets((current) =>
+                                      current.filter((_, currentIndex) => currentIndex !== index),
+                                    )
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-200 bg-white text-primary-600 dark:border-slate-700 dark:bg-slate-900 dark:text-primary-400"
+                            checked={notifyOwner}
+                            onChange={(event) => setNotifyOwner(event.target.checked)}
+                          />
+                          Notify server owner
+                        </label>
+                        <label className="block space-y-1 md:col-span-2">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Cooldown (minutes)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
+                            value={cooldownMinutes}
+                            onChange={(event) => setCooldownMinutes(event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-200 bg-white text-primary-600 dark:border-slate-700 dark:bg-slate-900 dark:text-primary-400"
-                    checked={notifyOwner}
-                    onChange={(event) => setNotifyOwner(event.target.checked)}
-                  />
-                  Notify server owner
-                </label>
-                <label className="block space-y-1 md:col-span-2">
-                  <span className="text-xs text-slate-600 dark:text-slate-300">Cooldown (minutes)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
-                    value={cooldownMinutes}
-                    onChange={(event) => setCooldownMinutes(event.target.value)}
-                  />
-                </label>
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4 text-xs dark:border-slate-800">
+            <div className="flex justify-between gap-2 border-t border-slate-200 px-6 py-4 text-xs dark:border-slate-800">
               <button
                 className="rounded-md border border-slate-200 px-3 py-1 font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
                 onClick={() => {
@@ -738,54 +820,74 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
               >
                 Cancel
               </button>
-              <button
-                className="rounded-md bg-primary-600 px-4 py-2 font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:bg-primary-500 disabled:opacity-60"
-                onClick={() => {
-                  if (editingRule) {
-                    const conditions: Record<string, number> = {};
-                    if (ruleType === 'resource_threshold') {
-                      if (cpuThreshold) conditions.cpuThreshold = Number(cpuThreshold);
-                      if (memoryThreshold) conditions.memoryThreshold = Number(memoryThreshold);
-                      if (diskThreshold) conditions.diskThreshold = Number(diskThreshold);
+              <div className="flex items-center gap-2">
+                {ruleStepIndex > 0 ? (
+                  <button
+                    className="rounded-md border border-slate-200 px-3 py-1 font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
+                    onClick={() => setRuleStep(ruleStepOrder[ruleStepIndex - 1])}
+                  >
+                    Back
+                  </button>
+                ) : null}
+                {ruleStepIndex < ruleStepOrder.length - 1 ? (
+                  <button
+                    className="rounded-md bg-primary-600 px-4 py-2 font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:bg-primary-500 disabled:opacity-60"
+                    onClick={() => setRuleStep(ruleStepOrder[ruleStepIndex + 1])}
+                    disabled={!canGoNextRuleStep}
+                  >
+                    Next
+                  </button>
+                ) : (
+                  <button
+                    className="rounded-md bg-primary-600 px-4 py-2 font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:bg-primary-500 disabled:opacity-60"
+                    onClick={() => {
+                      if (editingRule) {
+                        const conditions: Record<string, number> = {};
+                        if (ruleType === 'resource_threshold') {
+                          if (cpuThreshold) conditions.cpuThreshold = Number(cpuThreshold);
+                          if (memoryThreshold) conditions.memoryThreshold = Number(memoryThreshold);
+                          if (diskThreshold) conditions.diskThreshold = Number(diskThreshold);
+                        }
+                        if (ruleType === 'node_offline') {
+                          conditions.offlineThreshold = Number(offlineThreshold);
+                        }
+                        const actions: Record<string, unknown> = {
+                          webhooks: webhookTargets.map((entry) => entry.trim()).filter(Boolean),
+                          emails: emailTargets.map((entry) => entry.trim()).filter(Boolean),
+                          notifyOwner,
+                          cooldownMinutes: Number(cooldownMinutes),
+                        };
+                        updateRuleMutation.mutate({
+                          rule: editingRule,
+                          updates: {
+                            name: ruleName.trim(),
+                            description: ruleDescription.trim() || undefined,
+                            conditions,
+                            actions,
+                            enabled: editingRule.enabled,
+                          },
+                        });
+                        return;
+                      }
+                      createRuleMutation.mutate();
+                    }}
+                    disabled={
+                      !detailsValid ||
+                      !conditionsValid ||
+                      createRuleMutation.isPending ||
+                      updateRuleMutation.isPending
                     }
-                    if (ruleType === 'node_offline') {
-                      conditions.offlineThreshold = Number(offlineThreshold);
-                    }
-                    const actions: Record<string, unknown> = {
-                      webhooks: webhookTargets.map((entry) => entry.trim()).filter(Boolean),
-                      emails: emailTargets.map((entry) => entry.trim()).filter(Boolean),
-                      notifyOwner,
-                      cooldownMinutes: Number(cooldownMinutes),
-                    };
-                    updateRuleMutation.mutate({
-                      rule: editingRule,
-                      updates: {
-                        name: ruleName.trim(),
-                        description: ruleDescription.trim() || undefined,
-                        conditions,
-                        actions,
-                        enabled: editingRule.enabled,
-                      },
-                    });
-                    return;
-                  }
-                  createRuleMutation.mutate();
-                }}
-                disabled={
-                  !ruleName.trim() ||
-                  (ruleTarget !== 'global' && !ruleTargetId) ||
-                  createRuleMutation.isPending ||
-                  updateRuleMutation.isPending
-                }
-              >
-                {editingRule
-                  ? updateRuleMutation.isPending
-                    ? 'Saving...'
-                    : 'Save changes'
-                  : createRuleMutation.isPending
-                    ? 'Creating...'
-                    : 'Create rule'}
-              </button>
+                  >
+                    {editingRule
+                      ? updateRuleMutation.isPending
+                        ? 'Saving...'
+                        : 'Save changes'
+                      : createRuleMutation.isPending
+                        ? 'Creating...'
+                        : 'Create rule'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
