@@ -109,8 +109,9 @@ function UpdateServerModal({ serverId, disabled = false }: Props) {
     }
 
     setIpLoadError(null);
+    const networkName = server.networkMode?.trim() || 'mc-lan-static';
     nodesApi
-      .availableIps(server.nodeId, server.networkMode ?? 'mc-lan-static', 200)
+      .availableIps(server.nodeId, networkName, 200)
       .then((ips) => {
         if (!active) return;
         setAvailableIps(ips);

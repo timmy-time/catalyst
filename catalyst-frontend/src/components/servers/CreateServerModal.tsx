@@ -23,9 +23,8 @@ function CreateServerModal() {
   const [portBindings, setPortBindings] = useState<string[]>([]);
   const [environment, setEnvironment] = useState<Record<string, string>>({});
   const [imageVariant, setImageVariant] = useState('');
-  const [networkMode, setNetworkMode] = useState<'bridge' | 'mc-lan' | 'mc-lan-static'>(
-    'mc-lan-static',
-  );
+  const [networkMode, setNetworkMode] = useState('mc-lan-static');
+  const [customNetworkMode, setCustomNetworkMode] = useState('');
   const [primaryIp, setPrimaryIp] = useState('');
   const [allocationId, setAllocationId] = useState('');
   const [availableAllocations, setAvailableAllocations] = useState<
@@ -58,7 +57,7 @@ function CreateServerModal() {
   useEffect(() => {
     setPrimaryIp('');
     let active = true;
-    if (!nodeId || networkMode !== 'mc-lan-static') {
+    if (!nodeId || networkMode === 'bridge' || networkMode === 'host' || networkMode === 'custom') {
       setAvailableIps([]);
       setIpLoadError(null);
       return;
@@ -82,6 +81,37 @@ function CreateServerModal() {
       active = false;
     };
   }, [nodeId, networkMode]);
+
+  useEffect(() => {
+    if (!nodeId || networkMode !== 'custom') {
+      return;
+    }
+    const networkName = customNetworkMode.trim();
+    if (!networkName) {
+      setAvailableIps([]);
+      setIpLoadError(null);
+      return;
+    }
+    setPrimaryIp('');
+    let active = true;
+    setIpLoadError(null);
+    nodesApi
+      .availableIps(nodeId, networkName, 200)
+      .then((ips) => {
+        if (!active) return;
+        setAvailableIps(ips);
+      })
+      .catch((error: any) => {
+        if (!active) return;
+        const message = error?.response?.data?.error || 'Unable to load IP pool';
+        setAvailableIps([]);
+        setIpLoadError(message);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [nodeId, networkMode, customNetworkMode]);
 
   useEffect(() => {
     setAllocationId('');
@@ -159,13 +189,13 @@ function CreateServerModal() {
             databaseAllocation.trim() === '' ? undefined : Number(databaseAllocation),
         primaryPort: Number(port),
         portBindings: Object.keys(normalizedBindings).length ? normalizedBindings : undefined,
-        networkMode,
+        networkMode: networkMode === 'custom' ? customNetworkMode.trim() : networkMode,
         environment: {
           ...environment,
           ...(imageVariant ? { IMAGE_VARIANT: imageVariant } : {}),
         },
       };
-      if (networkMode === 'mc-lan-static') {
+      if (networkMode !== 'bridge' && networkMode !== 'host') {
         payload.primaryIp = primaryIp.trim() || null;
       }
       if (networkMode === 'bridge') {
@@ -196,6 +226,7 @@ function CreateServerModal() {
       setEnvironment({});
       setImageVariant('');
       setNetworkMode('mc-lan-static');
+      setCustomNetworkMode('');
       setPrimaryIp('');
       setPortBindings([]);
       setBackupAllocationMb('');
@@ -246,7 +277,8 @@ function CreateServerModal() {
     !detailsValid ||
     !resourcesValid ||
     !buildValid ||
-    !startupValid;
+    !startupValid ||
+    (networkMode === 'custom' && !customNetworkMode.trim());
 
   return (
     <div>
@@ -508,22 +540,69 @@ function CreateServerModal() {
                       </label>
                       <label className="block space-y-1">
                         <span className="text-slate-600 dark:text-slate-300">Network</span>
-                        <select
-                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
-                          value={networkMode}
-                          onChange={(e) =>
-                            setNetworkMode(e.target.value as 'bridge' | 'mc-lan' | 'mc-lan-static')
-                          }
-                        >
-                          <option value="bridge">Node IP (port mapping)</option>
-                          <option value="mc-lan">macvlan (DHCP)</option>
-                          <option value="mc-lan-static">macvlan (static IPAM)</option>
-                        </select>
-                      </label>
-                      {networkMode === 'mc-lan-static' ? (
+                          <select
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
+                            value={networkMode}
+                            onChange={(e) =>
+                              setNetworkMode(e.target.value)
+                            }
+                          >
+                            <option value="bridge">Node IP (port mapping)</option>
+                            <option value="host">Host network (no ports)</option>
+                            <option value="mc-lan-static">macvlan (static IPAM)</option>
+                            <option value="custom">Custom macvlan network</option>
+                          </select>
+                        </label>
+                      {networkMode === 'custom' ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Match the network name to the CNI config on the node (for example,
+                            mc-public).
+                          </p>
+                          <label className="block space-y-1">
+                            <span className="text-slate-600 dark:text-slate-300">Network name</span>
+                            <input
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
+                              value={customNetworkMode}
+                              onChange={(event) => setCustomNetworkMode(event.target.value)}
+                              placeholder="mc-public"
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      {networkMode !== 'bridge' && networkMode !== 'host' && networkMode !== 'custom' ? (
                         <div className="space-y-2">
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             Choose an IP from the node pool or leave auto-assign selected.
+                          </p>
+                          <label className="block space-y-1">
+                            <span className="text-slate-600 dark:text-slate-300">Primary IP allocation</span>
+                            <select
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
+                              value={primaryIp}
+                              onChange={(e) => setPrimaryIp(e.target.value)}
+                            >
+                              <option value="">Auto-assign</option>
+                              {availableIps.map((ip) => (
+                                <option key={ip} value={ip}>
+                                  {ip}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {ipLoadError ? (
+                            <p className="text-xs text-amber-600 dark:text-amber-300">{ipLoadError}</p>
+                          ) : null}
+                          {!ipLoadError && availableIps.length === 0 ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-500">
+                              No available IPs found.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : networkMode === 'custom' ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Choose an IP from the pool tied to this custom network.
                           </p>
                           <label className="block space-y-1">
                             <span className="text-slate-600 dark:text-slate-300">Primary IP allocation</span>

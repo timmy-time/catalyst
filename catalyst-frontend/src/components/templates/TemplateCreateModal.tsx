@@ -337,12 +337,19 @@ function TemplateCreateModal() {
         />
       </div>
       {open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white dark:bg-slate-950/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-surface-light dark:shadow-surface-dark transition-all duration-300 dark:border-slate-800 dark:bg-slate-900 flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Create template</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-10 backdrop-blur-sm">
+          <div className="flex w-full max-w-4xl max-h-[90vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-all duration-300 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-5 dark:border-slate-800">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                  Create template
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Define runtime images, resources, and startup commands.
+                </p>
+              </div>
               <button
-                className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
+                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
                 onClick={() => {
                   setOpen(false);
                   setImportError('');
@@ -351,7 +358,12 @@ function TemplateCreateModal() {
                 Close
               </button>
             </div>
-            <div className="space-y-4 overflow-y-auto px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+            <div className="space-y-6 overflow-y-auto px-6 py-5 text-sm text-slate-600 dark:text-slate-300">
+              {importError ? (
+                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-500 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                  {importError}
+                </p>
+              ) : null}
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="text-slate-500 dark:text-slate-400">Name</span>
@@ -410,222 +422,249 @@ function TemplateCreateModal() {
                   placeholder="Template summary"
                 />
               </label>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Container image</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={image}
-                    onChange={(event) => setImage(event.target.value)}
-                    placeholder="itzg/minecraft-server:latest"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Default image (optional)</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={defaultImage}
-                    onChange={(event) => setDefaultImage(event.target.value)}
-                    placeholder="eclipse-temurin:21-jre"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Install image (optional)</span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={installImage}
-                    onChange={(event) => setInstallImage(event.target.value)}
-                    placeholder="alpine:3.19"
-                  />
-                </label>
-              </div>
-              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/40">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-200">
-                    Image variants
-                  </div>
-                  <button
-                    className="rounded-md border border-slate-200 px-3 py-1 text-xs text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
-                    onClick={() =>
-                      setImageOptions((prev) => [...prev, { name: '', label: '', image: '' }])
-                    }
-                    type="button"
-                  >
-                    Add image
-                  </button>
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/40">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-200">
+                  Runtime images
                 </div>
-                {imageOptions.length ? (
-                  <div className="space-y-2">
-                    {imageOptions.map((option, index) => (
-                      <div
-                        key={`${option.name}-${index}`}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end"
-                      >
-                        <label className="block space-y-1">
-                          <span className="text-xs text-slate-500 dark:text-slate-400">Name</span>
-                          <input
-                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
-                            value={option.name}
-                            onChange={(event) =>
-                              setImageOptions((prev) =>
-                                prev.map((item, itemIndex) =>
-                                  itemIndex === index ? { ...item, name: event.target.value } : item,
-                                ),
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-xs text-slate-500 dark:text-slate-400">Label</span>
-                          <input
-                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
-                            value={option.label ?? ''}
-                            onChange={(event) =>
-                              setImageOptions((prev) =>
-                                prev.map((item, itemIndex) =>
-                                  itemIndex === index ? { ...item, label: event.target.value } : item,
-                                ),
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-xs text-slate-500 dark:text-slate-400">Image</span>
-                          <input
-                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
-                            value={option.image}
-                            onChange={(event) =>
-                              setImageOptions((prev) =>
-                                prev.map((item, itemIndex) =>
-                                  itemIndex === index ? { ...item, image: event.target.value } : item,
-                                ),
-                              )
-                            }
-                          />
-                        </label>
-                        <button
-                          className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
-                          onClick={() =>
-                            setImageOptions((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
-                          }
-                          type="button"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">Container image</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={image}
+                      onChange={(event) => setImage(event.target.value)}
+                      placeholder="itzg/minecraft-server:latest"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">
+                      Default image (optional)
+                    </span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={defaultImage}
+                      onChange={(event) => setDefaultImage(event.target.value)}
+                      placeholder="eclipse-temurin:21-jre"
+                    />
+                  </label>
+                  <label className="block space-y-1 md:col-span-2">
+                    <span className="text-slate-500 dark:text-slate-400">Install image (optional)</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={installImage}
+                      onChange={(event) => setInstallImage(event.target.value)}
+                      placeholder="alpine:3.19"
+                    />
+                  </label>
+                </div>
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3 transition-all duration-300 dark:border-slate-800 dark:bg-slate-950/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Image variants
+                    </div>
+                    <button
+                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
+                      onClick={() =>
+                        setImageOptions((prev) => [...prev, { name: '', label: '', image: '' }])
+                      }
+                      type="button"
+                    >
+                      Add image
+                    </button>
                   </div>
-                ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Add optional image variants for selectable runtimes.
-                  </p>
-                )}
+                  {imageOptions.length ? (
+                    <div className="space-y-2">
+                      {imageOptions.map((option, index) => (
+                        <div
+                          key={`${option.name}-${index}`}
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end"
+                        >
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Name</span>
+                            <input
+                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                              value={option.name}
+                              onChange={(event) =>
+                                setImageOptions((prev) =>
+                                  prev.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, name: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Label</span>
+                            <input
+                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                              value={option.label ?? ''}
+                              onChange={(event) =>
+                                setImageOptions((prev) =>
+                                  prev.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, label: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="block space-y-1">
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Image</span>
+                            <input
+                              className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                              value={option.image}
+                              onChange={(event) =>
+                                setImageOptions((prev) =>
+                                  prev.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, image: event.target.value }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </label>
+                          <button
+                            className="rounded-full border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
+                            onClick={() =>
+                              setImageOptions((prev) =>
+                                prev.filter((_, itemIndex) => itemIndex !== index),
+                              )
+                            }
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Add optional image variants for selectable runtimes.
+                    </p>
+                  )}
+                </div>
               </div>
-              <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Config file path (optional)</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  value={configFile}
-                  onChange={(event) => setConfigFile(event.target.value)}
-                  placeholder="/config/server.properties"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Config files (optional)</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  value={configFiles.join(', ')}
-                  onChange={(event) => {
-                    const next = event.target.value
-                      .split(',')
-                      .map((entry) => entry.trim())
-                      .filter(Boolean);
-                    setConfigFiles(next);
-                  }}
-                  placeholder="/config/server.properties, /config/extra.yml"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Startup command</span>
-                <textarea
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  rows={2}
-                  value={startup}
-                  onChange={(event) => setStartup(event.target.value)}
-                  placeholder="java -Xmx{{MEMORY}}M -jar server.jar"
-                />
-              </label>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="block space-y-1 md:col-span-2">
-                  <span className="text-slate-500 dark:text-slate-400">Stop command</span>
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/40">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-200">
+                  Commands & config
+                </div>
+                <label className="block space-y-1">
+                  <span className="text-slate-500 dark:text-slate-400">Config file path (optional)</span>
                   <input
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={stopCommand}
-                    onChange={(event) => setStopCommand(event.target.value)}
-                    placeholder="stop"
+                    value={configFile}
+                    onChange={(event) => setConfigFile(event.target.value)}
+                    placeholder="/config/server.properties"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Signal</span>
-                  <select
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={sendSignalTo}
-                    onChange={(event) => setSendSignalTo(event.target.value as 'SIGTERM' | 'SIGKILL')}
-                  >
-                    <option value="SIGTERM">SIGTERM</option>
-                    <option value="SIGKILL">SIGKILL</option>
-                  </select>
-                </label>
-              </div>
-              <label className="block space-y-1">
-                <span className="text-slate-500 dark:text-slate-400">Install script (optional)</span>
-                <textarea
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                  rows={5}
-                  value={installScript}
-                  onChange={(event) => setInstallScript(event.target.value)}
-                  placeholder="#!/bin/sh"
-                />
-              </label>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Ports (comma separated)</span>
+                  <span className="text-slate-500 dark:text-slate-400">Config files (optional)</span>
                   <input
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    value={supportedPorts}
-                    onChange={(event) => setSupportedPorts(event.target.value)}
-                    placeholder="25565, 25566"
+                    value={configFiles.join(', ')}
+                    onChange={(event) => {
+                      const next = event.target.value
+                        .split(',')
+                        .map((entry) => entry.trim())
+                        .filter(Boolean);
+                      setConfigFiles(next);
+                    }}
+                    placeholder="/config/server.properties, /config/extra.yml"
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Allocated memory (MB)</span>
-                  <input
+                  <span className="text-slate-500 dark:text-slate-400">Startup command</span>
+                  <textarea
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    type="number"
-                    min={128}
-                    value={allocatedMemoryMb}
-                    onChange={(event) => setAllocatedMemoryMb(event.target.value)}
+                    rows={2}
+                    value={startup}
+                    onChange={(event) => setStartup(event.target.value)}
+                    placeholder="java -Xmx{{MEMORY}}M -jar server.jar"
                   />
                 </label>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <label className="block space-y-1 md:col-span-2">
+                    <span className="text-slate-500 dark:text-slate-400">Stop command</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={stopCommand}
+                      onChange={(event) => setStopCommand(event.target.value)}
+                      placeholder="stop"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">Signal</span>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={sendSignalTo}
+                      onChange={(event) =>
+                        setSendSignalTo(event.target.value as 'SIGTERM' | 'SIGKILL')
+                      }
+                    >
+                      <option value="SIGTERM">SIGTERM</option>
+                      <option value="SIGKILL">SIGKILL</option>
+                    </select>
+                  </label>
+                </div>
                 <label className="block space-y-1">
-                  <span className="text-slate-500 dark:text-slate-400">Allocated CPU cores</span>
-                  <input
+                  <span className="text-slate-500 dark:text-slate-400">Install script (optional)</span>
+                  <textarea
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={allocatedCpuCores}
-                    onChange={(event) => setAllocatedCpuCores(event.target.value)}
+                    rows={5}
+                    value={installScript}
+                    onChange={(event) => setInstallScript(event.target.value)}
+                    placeholder="#!/bin/sh"
                   />
                 </label>
               </div>
-              <div className="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-800">
-                <div className="flex items-center justify-between">
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/40">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-200">
+                  Resources & ports
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">Ports (comma separated)</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      value={supportedPorts}
+                      onChange={(event) => setSupportedPorts(event.target.value)}
+                      placeholder="25565, 25566"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">Allocated memory (MB)</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      type="number"
+                      min={128}
+                      value={allocatedMemoryMb}
+                      onChange={(event) => setAllocatedMemoryMb(event.target.value)}
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-slate-500 dark:text-slate-400">Allocated CPU cores</span>
+                    <input
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400 dark:hover:border-primary-500/30"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={allocatedCpuCores}
+                      onChange={(event) => setAllocatedCpuCores(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/40">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-200">
                     Variables
                   </h3>
                   <button
-                    className="rounded-md border border-slate-200 px-3 py-1 text-xs text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
                     onClick={() => setVariables((prev) => [...prev, createVariableDraft()])}
                     type="button"
                   >
@@ -635,7 +674,7 @@ function TemplateCreateModal() {
                 {variables.map((variable, index) => (
                   <div
                     key={`${variable.name}-${index}`}
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-3 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900/40 dark:hover:border-primary-500/30"
+                    className="rounded-xl border border-slate-200 bg-white p-3 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-950/40 dark:hover:border-primary-500/30"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -676,7 +715,9 @@ function TemplateCreateModal() {
                           onChange={(event) =>
                             setVariables((prev) =>
                               prev.map((item, itemIndex) =>
-                                itemIndex === index ? { ...item, defaultValue: event.target.value } : item,
+                                itemIndex === index
+                                  ? { ...item, defaultValue: event.target.value }
+                                  : item,
                               ),
                             )
                           }
@@ -690,7 +731,9 @@ function TemplateCreateModal() {
                           onChange={(event) =>
                             setVariables((prev) =>
                               prev.map((item, itemIndex) =>
-                                itemIndex === index ? { ...item, description: event.target.value } : item,
+                                itemIndex === index
+                                  ? { ...item, description: event.target.value }
+                                  : item,
                               ),
                             )
                           }
@@ -704,7 +747,9 @@ function TemplateCreateModal() {
                           onChange={(event) =>
                             setVariables((prev) =>
                               prev.map((item, itemIndex) =>
-                                itemIndex === index ? { ...item, required: event.target.checked } : item,
+                                itemIndex === index
+                                  ? { ...item, required: event.target.checked }
+                                  : item,
                               ),
                             )
                           }
@@ -757,23 +802,28 @@ function TemplateCreateModal() {
                 ))}
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4 text-xs dark:border-slate-800">
-              <button
-                className="rounded-md border border-slate-200 px-3 py-1 font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
-                onClick={() => {
-                  setOpen(false);
-                  setImportError('');
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-md bg-primary-600 px-4 py-2 font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:bg-primary-500 disabled:opacity-60"
-                onClick={() => mutation.mutate()}
-                disabled={disableSubmit}
-              >
-                {mutation.isPending ? 'Creating...' : 'Create template'}
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4 text-xs dark:border-slate-800">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Templates are available immediately after creation.
+              </span>
+              <div className="flex gap-2">
+                <button
+                  className="rounded-full border border-slate-200 px-4 py-2 font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:border-primary-500/30"
+                  onClick={() => {
+                    setOpen(false);
+                    setImportError('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-full bg-primary-600 px-4 py-2 font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:bg-primary-500 disabled:opacity-60"
+                  onClick={() => mutation.mutate()}
+                  disabled={disableSubmit}
+                >
+                  {mutation.isPending ? 'Creating...' : 'Create template'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

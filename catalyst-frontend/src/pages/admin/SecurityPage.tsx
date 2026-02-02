@@ -93,17 +93,29 @@ function SecurityPage() {
   const lockoutPagination = lockoutResponse?.pagination;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <AdminTabs />
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Security</h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Configure rate limits, lockout policy, and audit retention.
-        </p>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark dark:hover:border-primary-500/30">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Security</h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Configure rate limits, lockout policy, and audit retention.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 dark:border-slate-800 dark:bg-slate-950/60">
+              {lockouts.length} lockouts
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 dark:border-slate-800 dark:bg-slate-950/60">
+              Page {lockoutPagination?.page ?? lockoutPage}
+            </span>
+          </div>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white px-6 py-5 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
-        <div className="flex items-center justify-between gap-4">
+      <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Security settings</h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -192,7 +204,7 @@ function SecurityPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Auth lockouts</h2>

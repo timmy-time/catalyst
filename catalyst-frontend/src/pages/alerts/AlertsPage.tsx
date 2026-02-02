@@ -266,19 +266,29 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">
-            {showAdminTargets ? 'Alerts' : 'Server alerts'}
-          </h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            {showAdminTargets
-              ? 'Monitor incidents and resolve alerts in real time.'
-              : 'Manage alert rules and incidents for this server.'}
-          </p>
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:shadow-surface-dark dark:hover:border-primary-500/30">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">
+              {showAdminTargets ? 'Alerts' : 'Server alerts'}
+            </h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {showAdminTargets
+                ? 'Monitor incidents and resolve alerts in real time.'
+                : 'Manage alert rules and incidents for this server.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 dark:border-slate-800 dark:bg-slate-950/60">
+              {alerts.filter((alert) => !alert.resolved).length} active
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 dark:border-slate-800 dark:bg-slate-950/60">
+              {alerts.length} total
+            </span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           <select
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 transition-all duration-300 focus:border-primary-500 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:focus:border-primary-400"
             value={filterResolved}
@@ -305,19 +315,19 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
       </div>
       {alertStats ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
             <div className="text-xs text-slate-500 dark:text-slate-400">Active alerts</div>
             <div className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
               {alertStats?.unresolved ?? 0}
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
             <div className="text-xs text-slate-500 dark:text-slate-400">Total alerts</div>
             <div className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
               {alertStats?.total ?? 0}
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-surface-light transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
             <div className="text-xs text-slate-500 dark:text-slate-400">Critical alerts</div>
             <div className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
               {alertStats?.bySeverity?.critical ?? 0}
@@ -326,7 +336,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
+      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Alert rules</div>
@@ -340,7 +350,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
             alertRules.map((rule) => (
               <div
                 key={rule.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-950/60 dark:hover:border-primary-500/30"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-950/60 dark:hover:border-primary-500/30"
               >
                 <div>
                   <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -356,13 +366,13 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-wide ${
-                      rule.enabled
-                        ? 'border-emerald-200 bg-emerald-100/60 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200'
-                        : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                    }`}
-                  >
+                      <span
+                        className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-wide ${
+                          rule.enabled
+                            ? 'border-emerald-200 bg-emerald-100/60 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200'
+                            : 'border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
                     {rule.enabled ? 'Enabled' : 'Disabled'}
                   </span>
                   {!showAdminTargets && rule.userId && user?.id && rule.userId !== user.id ? (
@@ -427,7 +437,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 px-4 py-4">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 px-5 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:hover:border-primary-500/30">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Alert history</div>
@@ -439,7 +449,7 @@ function AlertsPage({ scope = 'mine', serverId, showAdminTargets = false }: Prop
             <div className="text-xs text-slate-500 dark:text-slate-400">Loading alerts...</div>
           ) : hasAlerts ? (
             alerts.map((alert) => (
-              <div key={alert.id} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 px-4 py-3">
+              <div key={alert.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">

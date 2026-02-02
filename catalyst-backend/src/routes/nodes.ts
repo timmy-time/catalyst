@@ -501,10 +501,14 @@ export async function nodeRoutes(app: FastifyInstance) {
     { onRequest: [app.authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { nodeId } = request.params as { nodeId: string };
-      const { networkName = "mc-lan-static", limit = "200" } = request.query as {
+      const { networkName, limit = "200" } = request.query as {
         networkName?: string;
         limit?: string;
       };
+      const resolvedNetwork = (networkName || "").trim();
+      if (!resolvedNetwork) {
+        return reply.status(400).send({ error: "networkName is required" });
+      }
 
       const node = await prisma.node.findUnique({ where: { id: nodeId } });
       if (!node) {
@@ -514,7 +518,7 @@ export async function nodeRoutes(app: FastifyInstance) {
       const parsedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
       const available = await listAvailableIps(prisma, {
         nodeId,
-        networkName,
+        networkName: resolvedNetwork,
         limit: parsedLimit,
       });
 

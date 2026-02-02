@@ -37,7 +37,7 @@ const adminSections = [
   {
     title: 'Mod Manager',
     description: 'Configure mod marketplace access keys.',
-    to: '/admin/network',
+    to: '/admin/system',
   },
   {
     title: 'System',
