@@ -1,3 +1,4 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import { ServerState } from '../shared-types';
@@ -15,9 +16,13 @@ import {
 } from '../services/mailer';
 
 export async function adminRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
   const authenticate = (app as any).authenticate;
   const auth = (app as any).auth;
+  
+  const isSuspensionEnforced = () => process.env.SUSPENSION_ENFORCED !== "false";
+  const isSuspensionDeleteBlocked = () => process.env.SUSPENSION_DELETE_BLOCKED !== "false";
+  
   const isAdminUser = async (userId: string, required: 'admin.read' | 'admin.write' = 'admin.read') => {
     const userRoles = await prisma.role.findMany({
       where: {
@@ -619,7 +624,8 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ nodes });
+      // Explicitly serialize to avoid Fastify v5 + Prisma v7 serialization issues
+      return reply.send(JSON.parse(JSON.stringify({ nodes })));
     }
   );
 
@@ -721,7 +727,8 @@ export async function adminRoutes(app: FastifyInstance) {
           owner: ownerMap.get(server.ownerId) ?? null,
         }));
 
-      reply.send({
+      // Explicitly serialize to avoid Fastify v5 + Prisma v7 serialization issues
+      return reply.send(JSON.parse(JSON.stringify({
         servers: serversWithOwners,
         pagination: {
           page: Number(page),
@@ -729,7 +736,7 @@ export async function adminRoutes(app: FastifyInstance) {
           total,
           totalPages: Math.ceil(total / Number(limit)),
         },
-      });
+      })));
     }
   );
 
@@ -814,7 +821,7 @@ export async function adminRoutes(app: FastifyInstance) {
               }
               if (server.networkMode === 'host' && !environment.CATALYST_NETWORK_IP) {
                 try {
-                  environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress);
+                  environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) || "";
                 } catch (error: any) {
                   return { serverId: server.id, status: 'failed', error: error.message };
                 }
@@ -925,7 +932,7 @@ export async function adminRoutes(app: FastifyInstance) {
               }
               if (server.networkMode === 'host' && !environment.CATALYST_NETWORK_IP) {
                 try {
-                  environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress);
+                  environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) || "";
                 } catch (error: any) {
                   return { serverId: server.id, status: 'failed', error: error.message };
                 }

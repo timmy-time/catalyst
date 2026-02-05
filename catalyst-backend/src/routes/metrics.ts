@@ -1,8 +1,9 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 
 export async function metricsRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
 
   // Get server metrics
   app.get(

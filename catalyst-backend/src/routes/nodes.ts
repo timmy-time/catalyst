@@ -1,3 +1,4 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
@@ -118,7 +119,7 @@ const parseAllocationIps = async (input: string): Promise<string[]> => {
 };
 
 export async function nodeRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
 
   // Create node
   app.post(
@@ -758,6 +759,24 @@ export async function nodeRoutes(app: FastifyInstance) {
 
       const allocations = await prisma.nodeAllocation.findMany({
         where,
+        select: {
+          id: true,
+          nodeId: true,
+          serverId: true,
+          ip: true,
+          port: true,
+          alias: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
+          server: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+            },
+          },
+        },
         orderBy: [{ ip: "asc" }, { port: "asc" }],
       });
 

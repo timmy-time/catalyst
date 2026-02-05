@@ -1,3 +1,4 @@
+import "dotenv/config";
 import Fastify from "fastify";
 import fs from "fs";
 import path from "path";
@@ -6,6 +7,7 @@ import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyHelmet from "@fastify/helmet";
 import fastifyMultipart from "@fastify/multipart";
+import fastifyCompress from "@fastify/compress";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import pino from "pino";
@@ -50,9 +52,9 @@ const app = Fastify({
 
 app.setErrorHandler((error, _request, reply) => {
   app.log.error(error);
-  const status = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;
+  const status = (error as any).statusCode && (error as any).statusCode >= 400 ? (error as any).statusCode : 500;
   reply.status(status).send({
-    error: status === 500 ? "Internal Server Error" : error.message,
+    error: status === 500 ? "Internal Server Error" : (error as Error).message,
   });
 });
 
@@ -81,7 +83,7 @@ taskScheduler.setTaskExecutor({
     const server = task.serverId
       ? await prisma.server.findUnique({
           where: { id: task.serverId },
-          include: { template: true },
+          include: { template: true, node: true },
         })
         : null;
     if (!server) {
@@ -103,7 +105,10 @@ taskScheduler.setTaskExecutor({
     }
     if (server.networkMode === "host" && !environment.CATALYST_NETWORK_IP) {
       try {
-        environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) ?? undefined;
+        const normalized = normalizeHostIp(server.node.publicAddress);
+        if (normalized) {
+          environment.CATALYST_NETWORK_IP = normalized;
+        }
       } catch (error: any) {
         logger.warn(
           { nodeId: server.nodeId, hostIp: server.node.publicAddress, error: error.message },
@@ -274,6 +279,13 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false, // Allow WebSocket connections
+    });
+    
+    // Register compression for all responses (gzip/deflate/brotli)
+    await app.register(fastifyCompress, {
+      global: true,
+      threshold: 1024, // Only compress responses > 1KB
+      encodings: ['gzip', 'deflate', 'br'],
     });
 
     await app.register(fastifyRateLimit, {

@@ -9,11 +9,13 @@ const normalizeBaseUrl = (value?: string) => {
 
 const apiClient = axios.create({
   baseURL: normalizeBaseUrl(import.meta.env.VITE_API_URL) || '',
-  timeout: 10000, // 10 seconds - fail fast if something is wrong
+  timeout: 30000, // 30 seconds - increased for Fastify v5
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
+  // Prevent axios from aborting requests prematurely
+  validateStatus: (status) => status < 500,
 });
 
 apiClient.interceptors.request.use((config) => {

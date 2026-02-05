@@ -1,7 +1,6 @@
 // Catalyst Backend - Prisma Schema
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -324,6 +323,8 @@ model IpAllocation {
 
   @@unique([poolId, ip])
   @@index([serverId])
+  @@index([poolId, releasedAt])
+  @@index([poolId, ip])
 }
 
 model NodeAllocation {
@@ -341,6 +342,7 @@ model NodeAllocation {
 
   @@unique([nodeId, ip, port])
   @@index([serverId])
+  @@index([nodeId, serverId])
 }
 
 model DeploymentToken {

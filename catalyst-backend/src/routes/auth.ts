@@ -1,3 +1,4 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { auth } from "../auth";
@@ -5,7 +6,7 @@ import { logAuthAttempt } from "../middleware/audit";
 import { getSecuritySettings } from "../services/mailer";
 
 export async function authRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
 
   const loadUserPermissions = async (userId: string) => {
     const roles = await prisma.role.findMany({

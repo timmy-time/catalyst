@@ -1,7 +1,6 @@
+@import 'tailwindcss';
 @import 'sonner/dist/styles.css';
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config "../../tailwind.config.js";
 
 :root {
   --brand-yellow: 44 100% 63%;

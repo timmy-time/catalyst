@@ -1,7 +1,12 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 
-const prisma = new PrismaClient();
+// Prisma v7: Use adapter for PostgreSQL
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 const BULK_PREFIX = 'BULK_TEST_';
 const BULK_COUNT = 100;

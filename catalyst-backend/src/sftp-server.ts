@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import ssh2 from 'ssh2';
 import { join } from 'path';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './db.js';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import { createReadStream, createWriteStream } from 'fs';
@@ -11,8 +11,6 @@ import { auth } from './auth';
 
 const { Server: SSHServer, utils } = ssh2;
 type SFTPStream = ssh2.SFTPStream;
-
-const prisma = new PrismaClient();
 
 const SFTP_PORT = parseInt(process.env.SFTP_PORT || '2022');
 const SERVER_FILES_ROOT = process.env.SERVER_FILES_ROOT || '/var/lib/catalyst/servers';
