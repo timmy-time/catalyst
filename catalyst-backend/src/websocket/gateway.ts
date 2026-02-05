@@ -60,6 +60,11 @@ export class WebSocketGateway {
   private readonly agentConsoleBytesLimit = { maxBytes: 32 * 1024 };
   private readonly pendingAgentRequestLimit = 2000;
   private readonly autoRestartingServers = new Set<string>();
+  
+  // Connection limits
+  private readonly MAX_AGENT_CONNECTIONS = 1000;  // Max agent connections
+  private readonly MAX_CLIENT_CONNECTIONS = 5000; // Max client connections
+  private readonly MAX_CONNECTIONS_PER_USER = 50; // Max connections per user
 
   constructor(private prisma: PrismaClient, logger: pino.Logger) {
     this.logger = logger.child({ component: "WebSocketGateway" });
@@ -137,6 +142,14 @@ export class WebSocketGateway {
 
   private async handleAgentConnection(socket: any, nodeId: string, token: string | null) {
     try {
+      // Check agent connection limit
+      if (this.agents.size >= this.MAX_AGENT_CONNECTIONS) {
+        this.logger.warn({ nodeId }, `Agent connection rejected: limit reached (${this.MAX_AGENT_CONNECTIONS})`);
+        socket.send(JSON.stringify({ type: 'error', error: 'Connection limit reached' }));
+        socket.close();
+        return;
+      }
+      
       const agent: ConnectedAgent = {
         nodeId,
         socket,
@@ -157,8 +170,8 @@ export class WebSocketGateway {
         const authResult = await this.authenticateAgentToken(nodeId, token);
         if (authResult) {
           this.agents.set(nodeId, agent);
-          socket.socket.on("message", onMessage);
-          socket.socket.on("close", onClose);
+          socket.on("message", onMessage);
+          socket.on("close", onClose);
           this.logger.info(
             { nodeId, authType: authResult.authType },
             "Agent authenticated during connection",
@@ -166,19 +179,19 @@ export class WebSocketGateway {
           await this.finalizeAgentConnection(authResult.node, agent);
         } else {
           this.logger.warn(`Agent authentication failed for node: ${nodeId}`);
-          agent.socket.end();
+          agent.socket.close();
         }
       } else {
         // No token in URL - agent will send handshake with token
         // Add to agents map so handleAgentMessage can find it
         this.agents.set(nodeId, agent);
-        socket.socket.on("message", onMessage);
-        socket.socket.on("close", onClose);
+        socket.on("message", onMessage);
+        socket.on("close", onClose);
         this.logger.info({ nodeId }, "Agent connected, awaiting handshake");
       }
     } catch (err) {
       this.logger.error(err, "Error in agent connection");
-      socket.end();
+      socket.close();
     }
   }
 
@@ -189,7 +202,7 @@ export class WebSocketGateway {
       data: { isOnline: true, lastSeenAt: new Date() },
     });
     this.logger.info(`Agent connected: ${node.id} (${node.hostname})`);
-    agent.socket.socket.send(
+    agent.socket.send(
       JSON.stringify({
         type: "node_handshake_response",
         success: true,
@@ -217,12 +230,12 @@ export class WebSocketGateway {
       }
 
       const agent = this.agents.get(nodeId);
-      if (!agent || agent.socket.socket.readyState !== 1) {
+      if (!agent || agent.socket.readyState !== 1) {
         return;
       }
 
       for (const server of servers) {
-        agent.socket.socket.send(
+        agent.socket.send(
           JSON.stringify({
             type: "resume_console",
             serverId: server.id,
@@ -237,6 +250,14 @@ export class WebSocketGateway {
 
   private async handleClientConnection(socket: any, request: FastifyRequest) {
     try {
+      // Check overall client connection limit
+      if (this.clients.size >= this.MAX_CLIENT_CONNECTIONS) {
+        this.logger.warn('Client connection rejected: overall limit reached');
+        socket.send(JSON.stringify({ type: 'error', error: 'Connection limit reached' }));
+        socket.end();
+        return;
+      }
+      
       const clientId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const client: ClientConnection = {
         userId: "",
@@ -255,6 +276,16 @@ export class WebSocketGateway {
           headers: new Headers({ cookie: cookieHeader }),
         });
         if (session?.user?.id) {
+          // Check per-user connection limit
+          const userConnections = Array.from(this.clients.values()).filter(c => c.userId === session.user.id).length;
+          if (userConnections >= this.MAX_CONNECTIONS_PER_USER) {
+            this.logger.warn({ userId: session.user.id, current: userConnections }, 'User connection limit reached');
+            socket.send(JSON.stringify({ type: 'error', error: 'Too many connections for this user' }));
+            this.clients.delete(clientId);
+            socket.end();
+            return;
+          }
+          
           client.userId = session.user.id;
           client.authenticated = true;
           client.lastAuthAt = Date.now();
@@ -266,11 +297,11 @@ export class WebSocketGateway {
         this.logger.debug({ clientId, err: cookieErr }, "Cookie auth failed, waiting for handshake");
       }
 
-      socket.socket.on("message", (data: any) => {
+      socket.on("message", (data: any) => {
         this.logger.info({ clientId, dataType: typeof data, dataLength: data?.length }, "Raw message received");
         this.handleClientMessage(clientId, data);
       });
-      socket.socket.on("close", () => {
+      socket.on("close", () => {
         this.clients.delete(clientId);
         this.clientCommandCounters.delete(clientId);
         this.logger.info(`Client disconnected: ${clientId}`);
@@ -1385,7 +1416,7 @@ export class WebSocketGateway {
         });
 
         if (!server) {
-          return client.socket.socket.send(
+          return client.socket.send(
             JSON.stringify({
               type: "error",
               error: ErrorCodes.SERVER_NOT_FOUND,
@@ -1396,7 +1427,7 @@ export class WebSocketGateway {
         // Check if client is owner or has access
         const isOwner = server.ownerId === client.userId;
         if (!isOwner && !access) {
-          return client.socket.socket.send(
+          return client.socket.send(
             JSON.stringify({
               type: "error",
               error: ErrorCodes.PERMISSION_DENIED,
@@ -1405,7 +1436,7 @@ export class WebSocketGateway {
         }
 
         if (process.env.SUSPENSION_ENFORCED !== "false" && server.suspendedAt) {
-          return client.socket.socket.send(
+          return client.socket.send(
             JSON.stringify({
               type: "error",
               error: "SERVER_SUSPENDED",
@@ -1421,7 +1452,7 @@ export class WebSocketGateway {
                 ? "server.start"
                 : "server.start";
         if (!isOwner && !access?.permissions?.includes(requiredPermission)) {
-          return client.socket.socket.send(
+          return client.socket.send(
             JSON.stringify({
               type: "error",
               error: ErrorCodes.PERMISSION_DENIED,
@@ -1431,15 +1462,15 @@ export class WebSocketGateway {
 
         // Route to agent
         const agent = this.agents.get(server.nodeId);
-        if (agent && agent.socket.socket.readyState === 1) {
-          agent.socket.socket.send(
+        if (agent && agent.socket.readyState === 1) {
+          agent.socket.send(
             JSON.stringify({
               ...event,
               suspended: Boolean(server.suspendedAt),
             })
           );
         } else {
-          return client.socket.socket.send(
+          return client.socket.send(
             JSON.stringify({
               type: "error",
               error: ErrorCodes.NODE_OFFLINE,
@@ -1457,8 +1488,8 @@ export class WebSocketGateway {
         });
 
         if (!server) {
-          if (client.socket.socket.readyState === 1) {
-            client.socket.socket.send(
+          if (client.socket.readyState === 1) {
+            client.socket.send(
               JSON.stringify({
                 type: "error",
                 error: ErrorCodes.SERVER_NOT_FOUND,
@@ -1472,8 +1503,8 @@ export class WebSocketGateway {
           where: { userId_serverId: { userId: client.userId, serverId: server.id } },
         });
         if (!access && server.ownerId !== client.userId) {
-          if (client.socket.socket.readyState === 1) {
-            client.socket.socket.send(
+          if (client.socket.readyState === 1) {
+            client.socket.send(
               JSON.stringify({
                 type: "error",
                 error: ErrorCodes.PERMISSION_DENIED,
@@ -1483,8 +1514,8 @@ export class WebSocketGateway {
           return;
         }
         if (!access?.permissions?.includes("console.write") && server.ownerId !== client.userId) {
-          if (client.socket.socket.readyState === 1) {
-            client.socket.socket.send(
+          if (client.socket.readyState === 1) {
+            client.socket.send(
               JSON.stringify({
                 type: "error",
                 error: ErrorCodes.PERMISSION_DENIED,
@@ -1494,8 +1525,8 @@ export class WebSocketGateway {
           return;
         }
         if (process.env.SUSPENSION_ENFORCED !== "false" && server.suspendedAt) {
-          if (client.socket.socket.readyState === 1) {
-            client.socket.socket.send(
+          if (client.socket.readyState === 1) {
+            client.socket.send(
               JSON.stringify({
                 type: "error",
                 error: "SERVER_SUSPENDED",
@@ -1509,8 +1540,8 @@ export class WebSocketGateway {
           !this.allowServerCommand(server.id) ||
           event.data.length > 4096
         ) {
-          if (client.socket.socket.readyState === 1) {
-            client.socket.socket.send(
+          if (client.socket.readyState === 1) {
+            client.socket.send(
               JSON.stringify({
                 type: "console_output",
                 serverId: server.id,
@@ -1531,14 +1562,14 @@ export class WebSocketGateway {
           hasAgent: !!agent, 
           agentState: agent?.socket?.socket?.readyState 
         }, "Routing console_input to agent");
-        if (agent && agent.socket.socket.readyState === 1) {
-          agent.socket.socket.send(
+        if (agent && agent.socket.readyState === 1) {
+          agent.socket.send(
             JSON.stringify({ ...event, serverUuid: server.uuid })
           );
           this.logger.info({ nodeId: server.nodeId }, "Console input sent to agent");
-        } else if (client.socket.socket.readyState === 1) {
+        } else if (client.socket.readyState === 1) {
           this.logger.warn({ nodeId: server.nodeId, hasAgent: !!agent }, "Agent not available for console_input");
-          client.socket.socket.send(
+          client.socket.send(
             JSON.stringify({
               type: "error",
               error: ErrorCodes.NODE_OFFLINE,
@@ -1572,8 +1603,8 @@ export class WebSocketGateway {
 
     for (const [, client] of this.clients) {
       if (allowedUsers.includes(client.userId)) {
-        if (client.socket.socket.readyState === 1) {
-          client.socket.socket.send(JSON.stringify(message));
+        if (client.socket.readyState === 1) {
+          client.socket.send(JSON.stringify(message));
         }
       }
     }
@@ -1603,8 +1634,8 @@ export class WebSocketGateway {
         continue;
       }
       if (allowedUsers.includes(client.userId)) {
-        if (client.socket.socket.readyState === 1) {
-          client.socket.socket.send(JSON.stringify(message));
+        if (client.socket.readyState === 1) {
+          client.socket.send(JSON.stringify(message));
         }
       }
     }
@@ -1675,8 +1706,8 @@ export class WebSocketGateway {
     }
     this.consoleResumeTimestamps.set(resumeKey, now);
     const agent = this.agents.get(server.nodeId);
-    if (agent && agent.socket.socket.readyState === 1) {
-      agent.socket.socket.send(
+    if (agent && agent.socket.readyState === 1) {
+      agent.socket.send(
         JSON.stringify({
           type: "resume_console",
           serverId,
@@ -1708,13 +1739,13 @@ export class WebSocketGateway {
   // Send message to agent (for API endpoints)
   async sendToAgent(nodeId: string, message: any): Promise<boolean> {
     const agent = this.agents.get(nodeId);
-    if (!agent || !agent.authenticated || agent.socket.socket.readyState !== 1) {
+    if (!agent || !agent.authenticated || agent.socket.readyState !== 1) {
       this.logger.warn(`Cannot send to agent ${nodeId}: not connected`);
       return false;
     }
 
     try {
-      agent.socket.socket.send(JSON.stringify(message));
+      agent.socket.send(JSON.stringify(message));
       return true;
     } catch (err) {
       this.logger.error(err, `Error sending message to agent ${nodeId}`);
@@ -1724,7 +1755,7 @@ export class WebSocketGateway {
 
   async requestFromAgent(nodeId: string, message: any, timeoutMs = 15000): Promise<any> {
     const agent = this.agents.get(nodeId);
-    if (!agent || !agent.authenticated || agent.socket.socket.readyState !== 1) {
+    if (!agent || !agent.authenticated || agent.socket.readyState !== 1) {
       throw new Error(`Agent ${nodeId} not connected`);
     }
 
@@ -1742,13 +1773,13 @@ export class WebSocketGateway {
       this.pendingAgentRequests.set(requestId, { resolve, reject, timeout, kind: "json" });
     });
 
-    agent.socket.socket.send(JSON.stringify(payload));
+    agent.socket.send(JSON.stringify(payload));
     return response;
   }
 
   async requestBinaryFromAgent(nodeId: string, message: any, timeoutMs = 60000): Promise<Buffer> {
     const agent = this.agents.get(nodeId);
-    if (!agent || !agent.authenticated || agent.socket.socket.readyState !== 1) {
+    if (!agent || !agent.authenticated || agent.socket.readyState !== 1) {
       throw new Error(`Agent ${nodeId} not connected`);
     }
 
@@ -1772,7 +1803,7 @@ export class WebSocketGateway {
       });
     });
 
-    agent.socket.socket.send(JSON.stringify(payload));
+    agent.socket.send(JSON.stringify(payload));
     return response;
   }
 
@@ -1783,7 +1814,7 @@ export class WebSocketGateway {
     timeoutMs = 60000,
   ): Promise<void> {
     const agent = this.agents.get(nodeId);
-    if (!agent || !agent.authenticated || agent.socket.socket.readyState !== 1) {
+    if (!agent || !agent.authenticated || agent.socket.readyState !== 1) {
       throw new Error(`Agent ${nodeId} not connected`);
     }
 
@@ -1807,7 +1838,7 @@ export class WebSocketGateway {
       });
     });
 
-    agent.socket.socket.send(JSON.stringify(payload));
+    agent.socket.send(JSON.stringify(payload));
     await response;
   }
 }

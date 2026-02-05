@@ -2,9 +2,14 @@
 // Initializes database with example data
 
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import { auth } from "../src/auth";
 
-const prisma = new PrismaClient();
+// Prisma v7: Use adapter for PostgreSQL
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log("Seeding database...");

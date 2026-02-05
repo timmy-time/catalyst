@@ -1,10 +1,11 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import cron from 'node-cron';
 import cronParser from 'cron-parser';
 
 export async function taskRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
   const authenticate = (app as any).authenticate;
   const ensureSchedulePermission = async (
     userId: string,

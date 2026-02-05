@@ -1,3 +1,4 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 
@@ -28,7 +29,7 @@ const ensureAdmin = async (
 };
 
 export async function templateRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
 
   // List all templates
   app.get(

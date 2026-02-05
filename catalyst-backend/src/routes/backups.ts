@@ -1,7 +1,9 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import * as fs from "fs/promises";
 import { PassThrough } from "stream";
+import * as path from "path";
 import {
   resolveBackupStorageMode,
   buildBackupPaths,
@@ -11,7 +13,7 @@ import {
 import { randomUUID } from "crypto";
 
 export async function backupRoutes(app: FastifyInstance) {
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
   const BACKUP_DIR = process.env.BACKUP_DIR || "/var/lib/catalyst/backups";
   const STREAM_DIR = process.env.BACKUP_STREAM_DIR || "/tmp/catalyst-backup-stream";
   const TRANSFER_DIR = process.env.BACKUP_TRANSFER_DIR || "/tmp/catalyst-backup-transfer";

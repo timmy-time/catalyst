@@ -1,3 +1,4 @@
+import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
@@ -255,7 +256,7 @@ const buildConnectionInfo = (
 export async function serverRoutes(app: FastifyInstance) {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const prisma = (app as any).prisma || new PrismaClient();
+  // Using shared prisma instance from db.ts
   const execFileAsync = promisify(execFile);
   const serverDataRoot = process.env.SERVER_DATA_PATH || "/tmp/catalyst-servers";
   let fileRateLimitMax = 30;
@@ -1703,7 +1704,7 @@ export async function serverRoutes(app: FastifyInstance) {
           .status(response.status)
           .send({ error: `Provider error: ${body}` });
       }
-      const payload = await response.json();
+      const payload = await response.json() as any;
       if (provider === "paper" && payload && Array.isArray(payload?.result)) {
         return reply.send({ success: true, data: payload.result });
       }
@@ -1764,7 +1765,7 @@ export async function serverRoutes(app: FastifyInstance) {
           .status(response.status)
           .send({ error: `Provider error: ${body}` });
       }
-      const payload = await response.json();
+      const payload = await response.json() as any;
       if (provider === "paper" && payload && Array.isArray(payload?.result)) {
         return reply.send({ success: true, data: payload.result });
       }
@@ -1829,7 +1830,7 @@ export async function serverRoutes(app: FastifyInstance) {
           .status(metadataResponse.status)
           .send({ error: `Provider error: ${body}` });
       }
-      const metadata = await metadataResponse.json();
+      const metadata = await metadataResponse.json() as any;
 
       let downloadUrl = "";
       let filename = "";
@@ -1974,7 +1975,7 @@ export async function serverRoutes(app: FastifyInstance) {
           .status(response.status)
           .send({ error: `Provider error: ${body}` });
       }
-      const payload = await response.json();
+      const payload = await response.json() as any;
       if (provider === "spigot" && Array.isArray(payload)) {
         const filtered = payload.filter((entry: any) => entry?.premium !== true);
         return reply.send({ success: true, data: filtered });
@@ -2049,7 +2050,7 @@ export async function serverRoutes(app: FastifyInstance) {
           .status(response.status)
           .send({ error: `Provider error: ${body}` });
       }
-      const payload = await response.json();
+      const payload = await response.json() as any;
       return reply.send({ success: true, data: payload });
     }
   );
@@ -2112,7 +2113,7 @@ export async function serverRoutes(app: FastifyInstance) {
             .status(metadataResponse.status)
             .send({ error: `Provider error: ${body}` });
         }
-        const metadata = await metadataResponse.json();
+        const metadata = await metadataResponse.json() as any;
         const files = metadata?.files ?? [];
         const file = files.find((entry: any) => entry.primary) ?? files[0];
         downloadUrl = file?.url ?? "";
@@ -2139,7 +2140,7 @@ export async function serverRoutes(app: FastifyInstance) {
             .status(metadataResponse.status)
             .send({ error: `Provider error: ${body}` });
         }
-        const metadata = await metadataResponse.json();
+        const metadata = await metadataResponse.json() as any;
         const downloads = metadata?.downloads ?? {};
         const downloadEntry =
           downloads?.PAPER ||
@@ -3766,7 +3767,7 @@ export async function serverRoutes(app: FastifyInstance) {
       }
       if (server.networkMode === "host" && !environment.CATALYST_NETWORK_IP) {
         try {
-          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress);
+          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) || "";
         } catch (error: any) {
           return reply.status(400).send({ error: error.message });
         }
@@ -3890,7 +3891,7 @@ export async function serverRoutes(app: FastifyInstance) {
       }
       if (server.networkMode === "host" && !environment.CATALYST_NETWORK_IP) {
         try {
-          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress);
+          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) || "";
         } catch (error: any) {
           return reply.status(400).send({ error: error.message });
         }
@@ -4089,7 +4090,7 @@ export async function serverRoutes(app: FastifyInstance) {
       }
       if (server.networkMode === "host" && !environment.CATALYST_NETWORK_IP) {
         try {
-          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress);
+          environment.CATALYST_NETWORK_IP = normalizeHostIp(server.node.publicAddress) || "";
         } catch (error: any) {
           return reply.status(400).send({ error: error.message });
         }
