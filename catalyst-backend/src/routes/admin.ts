@@ -1480,6 +1480,15 @@ export async function adminRoutes(app: FastifyInstance) {
           node: true,
           allocations: {
             where: { releasedAt: null },
+            include: {
+              server: {
+                select: {
+                  id: true,
+                  name: true,
+                  status: true,
+                },
+              },
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -1510,6 +1519,14 @@ export async function adminRoutes(app: FastifyInstance) {
           availableCount,
           createdAt: pool.createdAt,
           updatedAt: pool.updatedAt,
+          allocations: pool.allocations.map((alloc) => ({
+            id: alloc.id,
+            ip: alloc.ip,
+            serverId: alloc.serverId,
+            serverName: alloc.server?.name,
+            serverStatus: alloc.server?.status,
+            createdAt: alloc.createdAt,
+          })),
         };
       });
 

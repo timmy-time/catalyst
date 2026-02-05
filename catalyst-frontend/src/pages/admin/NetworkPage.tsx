@@ -371,6 +371,22 @@ function NetworkPage() {
               <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                 Total: {pool.total} · Gateway: {pool.gateway ?? 'n/a'}
               </div>
+              {pool.allocations && pool.allocations.length > 0 && (
+                <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
+                  <div className="text-xs font-semibold text-slate-900 dark:text-white mb-2">
+                    Assigned IPs ({pool.allocations.length})
+                  </div>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {pool.allocations.map((alloc) => (
+                      <div key={alloc.id} className="flex items-center justify-between text-xs">
+                        <span className="font-mono text-slate-600 dark:text-slate-400">{alloc.ip}</span>
+                        <span className="text-slate-500 dark:text-slate-500">→</span>
+                        <span className="text-slate-900 dark:text-slate-100">{alloc.serverName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}
