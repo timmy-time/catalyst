@@ -208,12 +208,21 @@ function NodeDetailsPage() {
       <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-surface-light dark:shadow-surface-dark transition-all duration-300 hover:border-primary-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-primary-500/30">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Servers on node</h2>
-          <Link
-            to="/servers"
-            className="text-xs font-medium text-primary-600 transition-all duration-300 hover:text-primary-500 dark:text-primary-400"
-          >
-            View all servers
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/admin/nodes/${node.id}/allocations`}
+              className="text-xs font-medium text-primary-600 transition-all duration-300 hover:text-primary-500 dark:text-primary-400"
+            >
+              Manage allocations
+            </Link>
+            <span className="text-slate-300 dark:text-slate-700">·</span>
+            <Link
+              to="/servers"
+              className="text-xs font-medium text-primary-600 transition-all duration-300 hover:text-primary-500 dark:text-primary-400"
+            >
+              View all servers
+            </Link>
+          </div>
           </div>
         {serverList.length ? (
           <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-300">

@@ -37,6 +37,7 @@ import NotFoundPage from './pages/NotFoundPage';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import PluginTabPage from './pages/PluginTabPage';
 import { PluginProvider } from './plugins/PluginProvider';
+import NodeAllocationsPage from './pages/admin/NodeAllocationsPage';
 
 function App() {
   useAuthInit();
@@ -113,6 +114,14 @@ function App() {
               element={
                 <ProtectedRoute requireAdmin>
                   <NodeDetailsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="admin/nodes/:nodeId/allocations"
+              element={
+                <ProtectedRoute requireAdmin>
+                  <NodeAllocationsPage />
                 </ProtectedRoute>
               }
             />
