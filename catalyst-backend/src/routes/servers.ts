@@ -2250,12 +2250,13 @@ export async function serverRoutes(app: FastifyInstance) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { serverId } = request.params as { serverId: string };
-      const { provider, game, projectId, versionId, target } = request.body as {
+      const { provider, game, projectId, versionId, target, projectName } = request.body as {
         provider?: string;
         game?: string;
         projectId?: string;
         versionId?: string | number;
         target?: ModManagerTarget;
+        projectName?: string;
       };
       const userId = request.user.userId;
 
@@ -2359,6 +2360,30 @@ export async function serverRoutes(app: FastifyInstance) {
               versionId,
               target: normalizedFile,
             },
+          },
+        });
+        await prisma.installedMod.upsert({
+          where: { serverId_filename: { serverId, filename } },
+          update: {
+            provider: providerId,
+            game: providerEntry.game ?? game ?? null,
+            projectId: String(projectId),
+            versionId: String(versionId),
+            projectName: projectName || undefined,
+            type: target === "datapacks" ? "datapack" : target === "modpacks" ? "modpack" : "mod",
+            hasUpdate: false,
+            latestVersionId: null,
+            latestVersionName: null,
+          },
+          create: {
+            serverId,
+            filename,
+            provider: providerId,
+            game: providerEntry.game ?? game ?? null,
+            projectId: String(projectId),
+            versionId: String(versionId),
+            projectName: projectName || null,
+            type: target === "datapacks" ? "datapack" : target === "modpacks" ? "modpack" : "mod",
           },
         });
         reply.send({ success: true, data: { path: normalizedFile } });
@@ -2550,10 +2575,11 @@ export async function serverRoutes(app: FastifyInstance) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { serverId } = request.params as { serverId: string };
-      const { provider: rawProvider, projectId, versionId } = request.body as {
+      const { provider: rawProvider, projectId, versionId, projectName } = request.body as {
         provider?: string;
         projectId?: string;
         versionId?: string | number;
+        projectName?: string;
       };
       const provider = rawProvider === "spiget" ? "spigot" : rawProvider;
       const userId = request.user.userId;
@@ -2672,10 +2698,669 @@ export async function serverRoutes(app: FastifyInstance) {
             details: { provider, projectId, versionId, target: normalizedFile },
           },
         });
+        await prisma.installedMod.upsert({
+          where: { serverId_filename: { serverId, filename } },
+          update: {
+            provider: provider!,
+            projectId: String(projectId),
+            versionId: String(versionId),
+            projectName: projectName || undefined,
+            type: "plugin",
+            hasUpdate: false,
+            latestVersionId: null,
+            latestVersionName: null,
+          },
+          create: {
+            serverId,
+            filename,
+            provider: provider!,
+            projectId: String(projectId),
+            versionId: String(versionId),
+            projectName: projectName || null,
+            type: "plugin",
+          },
+        });
         reply.send({ success: true, data: { path: normalizedFile } });
       } catch (error: any) {
         reply.status(400).send({ error: error?.message || "Failed to install asset" });
       }
+    }
+  );
+
+  // List installed mods/plugins in a target directory
+  app.get(
+    "/:serverId/mod-manager/installed",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const { target } = request.query as { target?: string };
+      const userId = request.user.userId;
+
+      const server = await ensureServerAccess(serverId, userId, "server.read", reply);
+      if (!server) return;
+      const modManager = ensureModManagerEnabled(server, reply);
+      if (!modManager) return;
+
+      const targetValue = normalizeTargetValue(target) ?? "mods";
+      const normalizedBase = resolveTemplatePath(modManager.paths?.[targetValue], targetValue);
+      try {
+        const { targetPath: dirPath } = await resolveServerPath(server.uuid, normalizedBase);
+        const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+        const dbRecords = await prisma.installedMod.findMany({
+          where: { serverId },
+        });
+        const dbMap = new Map(dbRecords.map((record) => [record.filename, record]));
+        const files = await Promise.all(
+          entries
+            .filter((entry) => entry.isFile())
+            .map(async (entry) => {
+              const filePath = path.join(dirPath, entry.name);
+              const stat = await fs.stat(filePath).catch(() => null);
+              const meta = dbMap.get(entry.name);
+              return {
+                name: entry.name,
+                size: stat?.size ?? 0,
+                modifiedAt: stat?.mtime?.toISOString() ?? null,
+                provider: meta?.provider ?? null,
+                projectId: meta?.projectId ?? null,
+                versionId: meta?.versionId ?? null,
+                projectName: meta?.projectName ?? null,
+                hasUpdate: meta?.hasUpdate ?? false,
+                latestVersionId: meta?.latestVersionId ?? null,
+                latestVersionName: meta?.latestVersionName ?? null,
+                updateCheckedAt: meta?.updateCheckedAt?.toISOString() ?? null,
+              };
+            })
+        );
+        reply.send({ success: true, data: files });
+      } catch {
+        reply.send({ success: true, data: [] });
+      }
+    }
+  );
+
+  app.get(
+    "/:serverId/plugin-manager/installed",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+
+      const server = await ensureServerAccess(serverId, userId, "server.read", reply);
+      if (!server) return;
+      const pluginManager = ensurePluginManagerEnabled(server, reply);
+      if (!pluginManager) return;
+
+      const normalizedBase = resolveTemplatePath(pluginManager.paths?.plugins, "plugins");
+      try {
+        const { targetPath: dirPath } = await resolveServerPath(server.uuid, normalizedBase);
+        const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+        const dbRecords = await prisma.installedMod.findMany({
+          where: { serverId, type: "plugin" },
+        });
+        const dbMap = new Map(dbRecords.map((record) => [record.filename, record]));
+        const files = await Promise.all(
+          entries
+            .filter((entry) => entry.isFile())
+            .map(async (entry) => {
+              const filePath = path.join(dirPath, entry.name);
+              const stat = await fs.stat(filePath).catch(() => null);
+              const meta = dbMap.get(entry.name);
+              return {
+                name: entry.name,
+                size: stat?.size ?? 0,
+                modifiedAt: stat?.mtime?.toISOString() ?? null,
+                provider: meta?.provider ?? null,
+                projectId: meta?.projectId ?? null,
+                versionId: meta?.versionId ?? null,
+                projectName: meta?.projectName ?? null,
+                hasUpdate: meta?.hasUpdate ?? false,
+                latestVersionId: meta?.latestVersionId ?? null,
+                latestVersionName: meta?.latestVersionName ?? null,
+                updateCheckedAt: meta?.updateCheckedAt?.toISOString() ?? null,
+              };
+            })
+        );
+        reply.send({ success: true, data: files });
+      } catch {
+        reply.send({ success: true, data: [] });
+      }
+    }
+  );
+
+  // Uninstall (delete) a mod from the server
+  app.post(
+    "/:serverId/mod-manager/uninstall",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const { filename, target } = request.body as { filename?: string; target?: string };
+      const userId = request.user.userId;
+
+      if (!filename) {
+        return reply.status(400).send({ error: "filename is required" });
+      }
+
+      const server = await ensureServerAccess(serverId, userId, "file.write", reply);
+      if (!server) return;
+      const modManager = ensureModManagerEnabled(server, reply);
+      if (!modManager) return;
+
+      const targetValue = normalizeTargetValue(target) ?? "mods";
+      const normalizedBase = resolveTemplatePath(modManager.paths?.[targetValue], targetValue);
+      const safeName = sanitizeFilename(filename);
+      const normalizedFile = normalizeRequestPath(path.posix.join(normalizedBase, safeName));
+
+      try {
+        const { targetPath: resolvedPath } = await resolveServerPath(server.uuid, normalizedFile);
+        await fs.unlink(resolvedPath);
+        await prisma.installedMod.deleteMany({ where: { serverId, filename: safeName } });
+        await prisma.auditLog.create({
+          data: {
+            userId,
+            action: "mod_manager.uninstall",
+            resource: "server",
+            resourceId: serverId,
+            details: { filename: safeName, target: targetValue },
+          },
+        });
+        reply.send({ success: true });
+      } catch (error: any) {
+        reply.status(400).send({ error: error?.message || "Failed to uninstall mod" });
+      }
+    }
+  );
+
+  // Uninstall (delete) a plugin from the server
+  app.post(
+    "/:serverId/plugin-manager/uninstall",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const { filename } = request.body as { filename?: string };
+      const userId = request.user.userId;
+
+      if (!filename) {
+        return reply.status(400).send({ error: "filename is required" });
+      }
+
+      const server = await ensureServerAccess(serverId, userId, "file.write", reply);
+      if (!server) return;
+      const pluginManager = ensurePluginManagerEnabled(server, reply);
+      if (!pluginManager) return;
+
+      const normalizedBase = resolveTemplatePath(pluginManager.paths?.plugins, "plugins");
+      const safeName = sanitizeFilename(filename);
+      const normalizedFile = normalizeRequestPath(path.posix.join(normalizedBase, safeName));
+
+      try {
+        const { targetPath: resolvedPath } = await resolveServerPath(server.uuid, normalizedFile);
+        await fs.unlink(resolvedPath);
+        await prisma.installedMod.deleteMany({ where: { serverId, filename: safeName } });
+        await prisma.auditLog.create({
+          data: {
+            userId,
+            action: "plugin_manager.uninstall",
+            resource: "server",
+            resourceId: serverId,
+            details: { filename: safeName },
+          },
+        });
+        reply.send({ success: true });
+      } catch (error: any) {
+        reply.status(400).send({ error: error?.message || "Failed to uninstall plugin" });
+      }
+    }
+  );
+
+  // Check for updates on installed mods
+  app.post(
+    "/:serverId/mod-manager/check-updates",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+
+      const server = await ensureServerAccess(serverId, userId, "server.read", reply);
+      if (!server) return;
+      const modManager = ensureModManagerEnabled(server, reply);
+      if (!modManager) return;
+
+      const records = await prisma.installedMod.findMany({
+        where: { serverId, type: { in: ["mod", "datapack", "modpack"] } },
+      });
+      if (!records.length) {
+        return reply.send({ success: true, data: { checked: 0, updatesAvailable: 0 } });
+      }
+
+      let settings: any;
+      try {
+        settings = await getModManagerSettings();
+      } catch (error: any) {
+        return reply.status(409).send({ error: error?.message || "Missing provider API key" });
+      }
+
+      let updatesAvailable = 0;
+      for (const record of records) {
+        try {
+          const providerConfig = await loadProviderConfig(record.provider);
+          if (!providerConfig) continue;
+          const headers = buildProviderHeaders(providerConfig, settings);
+          const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
+          const endpoint = providerConfig.endpoints.versions || providerConfig.endpoints.files;
+          if (!endpoint) continue;
+          const encodedProjectId =
+            record.provider === "paper"
+              ? String(record.projectId).split("/").map(encodeURIComponent).join("/")
+              : encodeURIComponent(record.projectId);
+          const url = `${baseUrl}${endpoint.replace("{projectId}", encodedProjectId)}`;
+          const response = await fetch(url, { headers });
+          if (!response.ok) continue;
+          const payload = (await response.json()) as any;
+
+          let latestVersionId: string | null = null;
+          let latestVersionName: string | null = null;
+
+          if (record.provider === "modrinth") {
+            const versions = Array.isArray(payload) ? payload : [];
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = latest.id;
+              latestVersionName = latest.version_number ?? latest.name ?? null;
+            }
+          } else if (record.provider === "curseforge") {
+            const files = Array.isArray(payload?.data) ? payload.data : [];
+            const latest = files[0];
+            if (latest) {
+              latestVersionId = String(latest.id);
+              latestVersionName = latest.displayName ?? latest.fileName ?? null;
+            }
+          } else if (record.provider === "paper") {
+            const versions = Array.isArray(payload?.result) ? payload.result : (Array.isArray(payload) ? payload : []);
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = latest.name ?? String(latest.id ?? "");
+              latestVersionName = latest.name ?? null;
+            }
+          } else if (record.provider === "spigot") {
+            const versions = Array.isArray(payload) ? payload : [];
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = String(latest.id);
+              latestVersionName = latest.name ?? null;
+            }
+          }
+
+          const hasUpdate = latestVersionId !== null && latestVersionId !== record.versionId;
+          if (hasUpdate) updatesAvailable++;
+
+          await prisma.installedMod.update({
+            where: { id: record.id },
+            data: {
+              latestVersionId,
+              latestVersionName,
+              hasUpdate,
+              updateCheckedAt: new Date(),
+            },
+          });
+        } catch {
+          // Skip failed checks for individual mods
+        }
+      }
+
+      reply.send({ success: true, data: { checked: records.length, updatesAvailable } });
+    }
+  );
+
+  // Check for updates on installed plugins
+  app.post(
+    "/:serverId/plugin-manager/check-updates",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+
+      const server = await ensureServerAccess(serverId, userId, "server.read", reply);
+      if (!server) return;
+      const pluginManager = ensurePluginManagerEnabled(server, reply);
+      if (!pluginManager) return;
+
+      const records = await prisma.installedMod.findMany({
+        where: { serverId, type: "plugin" },
+      });
+      if (!records.length) {
+        return reply.send({ success: true, data: { checked: 0, updatesAvailable: 0 } });
+      }
+
+      let settings: any;
+      try {
+        settings = await getModManagerSettings();
+      } catch (error: any) {
+        return reply.status(409).send({ error: error?.message || "Missing provider API key" });
+      }
+
+      let updatesAvailable = 0;
+      for (const record of records) {
+        try {
+          const providerConfig = await loadPluginProviderConfig(record.provider);
+          if (!providerConfig) continue;
+          const headers = buildProviderHeaders(providerConfig, settings);
+          const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
+          const endpoint = providerConfig.endpoints.versions || providerConfig.endpoints.files;
+          if (!endpoint) continue;
+          const encodedProjectId = encodeURIComponent(record.projectId);
+          const url = `${baseUrl}${endpoint.replace("{projectId}", encodedProjectId)}`;
+          const response = await fetch(url, { headers });
+          if (!response.ok) continue;
+          const payload = (await response.json()) as any;
+
+          let latestVersionId: string | null = null;
+          let latestVersionName: string | null = null;
+
+          if (record.provider === "modrinth") {
+            const versions = Array.isArray(payload) ? payload : [];
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = latest.id;
+              latestVersionName = latest.version_number ?? latest.name ?? null;
+            }
+          } else if (record.provider === "paper") {
+            const versions = Array.isArray(payload?.result) ? payload.result : (Array.isArray(payload) ? payload : []);
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = latest.name ?? String(latest.id ?? "");
+              latestVersionName = latest.name ?? null;
+            }
+          } else if (record.provider === "spigot") {
+            const versions = Array.isArray(payload) ? payload : [];
+            const latest = versions[0];
+            if (latest) {
+              latestVersionId = String(latest.id);
+              latestVersionName = latest.name ?? null;
+            }
+          }
+
+          const hasUpdate = latestVersionId !== null && latestVersionId !== record.versionId;
+          if (hasUpdate) updatesAvailable++;
+
+          await prisma.installedMod.update({
+            where: { id: record.id },
+            data: {
+              latestVersionId,
+              latestVersionName,
+              hasUpdate,
+              updateCheckedAt: new Date(),
+            },
+          });
+        } catch {
+          // Skip failed checks
+        }
+      }
+
+      reply.send({ success: true, data: { checked: records.length, updatesAvailable } });
+    }
+  );
+
+  // Update a specific mod to its latest version
+  app.post(
+    "/:serverId/mod-manager/update",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const { filenames } = request.body as { filenames?: string[] };
+      const userId = request.user.userId;
+
+      if (!filenames?.length) {
+        return reply.status(400).send({ error: "filenames array is required" });
+      }
+
+      const server = await ensureServerAccess(serverId, userId, "file.write", reply);
+      if (!server) return;
+      const modManager = ensureModManagerEnabled(server, reply);
+      if (!modManager) return;
+
+      let settings: any;
+      try {
+        settings = await getModManagerSettings();
+      } catch (error: any) {
+        return reply.status(409).send({ error: error?.message || "Missing provider API key" });
+      }
+
+      const results: { filename: string; success: boolean; error?: string }[] = [];
+
+      for (const filename of filenames) {
+        try {
+          const record = await prisma.installedMod.findFirst({
+            where: { serverId, filename, type: { in: ["mod", "datapack", "modpack"] } },
+          });
+          if (!record || !record.latestVersionId) {
+            results.push({ filename, success: false, error: "No update info available" });
+            continue;
+          }
+
+          const providerConfig = await loadProviderConfig(record.provider);
+          if (!providerConfig) {
+            results.push({ filename, success: false, error: "Provider not found" });
+            continue;
+          }
+          const headers = buildProviderHeaders(providerConfig, settings);
+          const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
+
+          let downloadUrl = "";
+          let newFilename = "";
+
+          if (record.provider === "modrinth") {
+            const versionEndpoint = providerConfig.endpoints.version || "/v2/version/{versionId}";
+            const vUrl = `${baseUrl}${versionEndpoint.replace("{versionId}", encodeURIComponent(record.latestVersionId))}`;
+            const vRes = await fetch(vUrl, { headers });
+            if (!vRes.ok) throw new Error("Failed to fetch version info");
+            const vData = (await vRes.json()) as any;
+            const file = vData.files?.[0];
+            if (file) {
+              downloadUrl = file.url;
+              newFilename = file.filename;
+            }
+          } else if (record.provider === "curseforge") {
+            const fileEndpoint = providerConfig.endpoints.file || "/v1/mods/{projectId}/files/{fileId}";
+            const fUrl = `${baseUrl}${fileEndpoint.replace("{projectId}", encodeURIComponent(record.projectId)).replace("{fileId}", encodeURIComponent(record.latestVersionId))}`;
+            const fRes = await fetch(fUrl, { headers });
+            if (!fRes.ok) throw new Error("Failed to fetch file info");
+            const fData = (await fRes.json()) as any;
+            downloadUrl = fData.data?.downloadUrl ?? "";
+            newFilename = fData.data?.fileName ?? "";
+          } else if (record.provider === "paper") {
+            const parts = record.projectId.split("/");
+            if (parts.length >= 2) {
+              downloadUrl = `${baseUrl}/api/v1/projects/${encodeURIComponent(parts[0])}/versions/${encodeURIComponent(parts[1])}/PAPER/download`;
+              newFilename = `${parts[0]}-${record.latestVersionId}.jar`;
+            }
+          } else if (record.provider === "spigot") {
+            downloadUrl = `${baseUrl}/v2/resources/${encodeURIComponent(record.projectId)}/versions/${encodeURIComponent(record.latestVersionId)}/download`;
+            newFilename = `spigot-${record.projectId}-${record.latestVersionId}.jar`;
+          }
+
+          if (!downloadUrl || !newFilename) {
+            results.push({ filename, success: false, error: "Could not resolve download" });
+            continue;
+          }
+
+          // Determine target directory from type
+          const targetValue = record.type === "datapack" ? "datapacks" : record.type === "modpack" ? "modpacks" : "mods";
+          const normalizedBase = resolveTemplatePath(modManager.paths?.[targetValue], targetValue);
+
+          // Delete old file
+          try {
+            const { targetPath: oldPath } = await resolveServerPath(server.uuid, normalizeRequestPath(path.posix.join(normalizedBase, record.filename)));
+            await fs.unlink(oldPath).catch(() => {});
+          } catch {}
+
+          // Download new file
+          const normalizedFile = normalizeRequestPath(path.posix.join(normalizedBase, newFilename));
+          const { targetPath: resolvedPath } = await resolveServerPath(server.uuid, normalizedFile);
+          await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+
+          const dlRes = await fetch(downloadUrl, { headers, redirect: "follow" });
+          if (!dlRes.ok || !dlRes.body) throw new Error("Download failed");
+          const arrayBuffer = await dlRes.arrayBuffer();
+          await fs.writeFile(resolvedPath, Buffer.from(arrayBuffer));
+
+          // Update DB record
+          await prisma.installedMod.update({
+            where: { id: record.id },
+            data: {
+              filename: newFilename,
+              versionId: record.latestVersionId,
+              hasUpdate: false,
+              latestVersionId: null,
+              latestVersionName: null,
+            },
+          });
+
+          results.push({ filename, success: true });
+        } catch (error: any) {
+          results.push({ filename, success: false, error: error?.message || "Update failed" });
+        }
+      }
+
+      reply.send({ success: true, data: results });
+    }
+  );
+
+  // Update a specific plugin to its latest version
+  app.post(
+    "/:serverId/plugin-manager/update",
+    {
+      onRequest: [app.authenticate],
+      config: { rateLimit: { max: fileRateLimitMax, timeWindow: "1 minute" } },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const { filenames } = request.body as { filenames?: string[] };
+      const userId = request.user.userId;
+
+      if (!filenames?.length) {
+        return reply.status(400).send({ error: "filenames array is required" });
+      }
+
+      const server = await ensureServerAccess(serverId, userId, "file.write", reply);
+      if (!server) return;
+      const pluginManager = ensurePluginManagerEnabled(server, reply);
+      if (!pluginManager) return;
+
+      let settings: any;
+      try {
+        settings = await getModManagerSettings();
+      } catch (error: any) {
+        return reply.status(409).send({ error: error?.message || "Missing provider API key" });
+      }
+
+      const normalizedBase = resolveTemplatePath(pluginManager.paths?.plugins, "plugins");
+      const results: { filename: string; success: boolean; error?: string }[] = [];
+
+      for (const filename of filenames) {
+        try {
+          const record = await prisma.installedMod.findFirst({
+            where: { serverId, filename, type: "plugin" },
+          });
+          if (!record || !record.latestVersionId) {
+            results.push({ filename, success: false, error: "No update info available" });
+            continue;
+          }
+
+          const providerConfig = await loadPluginProviderConfig(record.provider);
+          if (!providerConfig) {
+            results.push({ filename, success: false, error: "Provider not found" });
+            continue;
+          }
+          const headers = buildProviderHeaders(providerConfig, settings);
+          const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
+
+          let downloadUrl = "";
+          let newFilename = "";
+
+          if (record.provider === "modrinth") {
+            const versionEndpoint = providerConfig.endpoints.version || "/v2/version/{versionId}";
+            const vUrl = `${baseUrl}${versionEndpoint.replace("{versionId}", encodeURIComponent(record.latestVersionId))}`;
+            const vRes = await fetch(vUrl, { headers });
+            if (!vRes.ok) throw new Error("Failed to fetch version info");
+            const vData = (await vRes.json()) as any;
+            const file = vData.files?.[0];
+            if (file) {
+              downloadUrl = file.url;
+              newFilename = file.filename;
+            }
+          } else if (record.provider === "paper") {
+            const parts = record.projectId.split("/");
+            if (parts.length >= 2) {
+              downloadUrl = `${baseUrl}/api/v1/projects/${encodeURIComponent(parts[0])}/versions/${encodeURIComponent(parts[1])}/PAPER/download`;
+              newFilename = `${parts[0]}-${record.latestVersionId}.jar`;
+            }
+          } else if (record.provider === "spigot") {
+            downloadUrl = `${baseUrl}/v2/resources/${encodeURIComponent(record.projectId)}/versions/${encodeURIComponent(record.latestVersionId)}/download`;
+            newFilename = `spigot-${record.projectId}-${record.latestVersionId}.jar`;
+          }
+
+          if (!downloadUrl || !newFilename) {
+            results.push({ filename, success: false, error: "Could not resolve download" });
+            continue;
+          }
+
+          // Delete old file
+          try {
+            const { targetPath: oldPath } = await resolveServerPath(server.uuid, normalizeRequestPath(path.posix.join(normalizedBase, record.filename)));
+            await fs.unlink(oldPath).catch(() => {});
+          } catch {}
+
+          // Download new file
+          const normalizedFile = normalizeRequestPath(path.posix.join(normalizedBase, newFilename));
+          const { targetPath: resolvedPath } = await resolveServerPath(server.uuid, normalizedFile);
+          await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+
+          const dlRes = await fetch(downloadUrl, { headers, redirect: "follow" });
+          if (!dlRes.ok || !dlRes.body) throw new Error("Download failed");
+          const arrayBuffer = await dlRes.arrayBuffer();
+          await fs.writeFile(resolvedPath, Buffer.from(arrayBuffer));
+
+          // Update DB record
+          await prisma.installedMod.update({
+            where: { id: record.id },
+            data: {
+              filename: newFilename,
+              versionId: record.latestVersionId,
+              hasUpdate: false,
+              latestVersionId: null,
+              latestVersionName: null,
+            },
+          });
+
+          results.push({ filename, success: true });
+        } catch (error: any) {
+          results.push({ filename, success: false, error: error?.message || "Update failed" });
+        }
+      }
+
+      reply.send({ success: true, data: results });
     }
   );
 
