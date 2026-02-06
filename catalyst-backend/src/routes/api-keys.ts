@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db";
 import { Permission } from "../shared-types";
 import { auth } from "../auth";
+import { serialize } from '../utils/serialize';
 
 const createApiKeySchema = z.object({
   name: z.string().min(1).max(100),
@@ -89,10 +90,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.send({
+      return reply.send(serialize({
         success: true,
         data: apiKeyData,
-      });
+      }));
     } catch (error: any) {
       request.log.error(error, "Failed to create API key");
       return reply.status(500).send({
@@ -137,10 +138,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.send({
+      return reply.send(serialize({
         success: true,
         data: apiKeys,
-      });
+      }));
     } catch (error: any) {
       request.log.error(error, "Failed to list API keys");
       return reply.status(500).send({
@@ -186,10 +187,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         });
       }
 
-      return reply.send({
+      return reply.send(serialize({
         success: true,
         data: apiKey,
-      });
+      }));
     } catch (error: any) {
       request.log.error(error, "Failed to get API key");
       return reply.status(500).send({
@@ -236,10 +237,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         },
       });
 
-      return reply.send({
+      return reply.send(serialize({
         success: true,
         data: apiKey,
-      });
+      }));
     } catch (error: any) {
       request.log.error(error, "Failed to update API key");
       return reply.status(500).send({
@@ -323,7 +324,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
         });
       }
 
-      return reply.send({
+      return reply.send(serialize({
         success: true,
         data: {
           totalRequests: apiKey.requestCount || 0,
@@ -335,7 +336,7 @@ export async function apiKeyRoutes(app: FastifyInstance) {
           },
           createdAt: apiKey.createdAt,
         },
-      });
+      }));
     } catch (error: any) {
       request.log.error(error, "Failed to get API key usage");
       return reply.status(500).send({

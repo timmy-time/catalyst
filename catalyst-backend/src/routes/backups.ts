@@ -11,6 +11,7 @@ import {
   deleteBackupFromStorage,
 } from "../services/backup-storage";
 import { randomUUID } from "crypto";
+import { serialize } from '../utils/serialize';
 
 export async function backupRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -173,12 +174,12 @@ export async function backupRoutes(app: FastifyInstance) {
         return reply.status(503).send({ error: "Failed to send backup request to agent" });
       }
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         message: "Backup creation started",
         backupName,
         backupId: backupRecord.id,
-      });
+      }));
     }
   );
 
@@ -251,13 +252,13 @@ export async function backupRoutes(app: FastifyInstance) {
         }),
       );
 
-      reply.send({
+      reply.send(serialize({
         backups: normalizedBackups,
         total,
         page: pageNum,
         pageSize: limitNum,
         totalPages: Math.ceil(total / limitNum),
-      });
+      }));
     }
   );
 
@@ -400,10 +401,10 @@ export async function backupRoutes(app: FastifyInstance) {
         data: { restoredAt: new Date() },
       });
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         message: "Backup restoration started",
-      });
+      }));
     }
   );
 

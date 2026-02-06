@@ -1,8 +1,15 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import ServerStatusBadge from '../../components/servers/ServerStatusBadge';
 import { useConsole } from '../../hooks/useConsole';
 import { useServer } from '../../hooks/useServer';
+
+type ConsoleEntry = {
+  id: string;
+  stream: string;
+  data: string;
+  timestamp?: string;
+};
 
 const streamStyles: Record<string, string> = {
   stdout: 'text-emerald-500',
@@ -25,44 +32,123 @@ const formatTimestamp = (value?: string) => {
   return `${hours}:${minutes} - ${month}-${day}-${year}`;
 };
 
-function ServerConsolePage() {
-  const { serverId } = useParams();
-  const { data: server } = useServer(serverId);
-  const { entries, send, isConnected, isLoading, isError, refetch, clear } = useConsole(serverId);
-  const [command, setCommand] = useState('');
-  const [autoScroll, setAutoScroll] = useState(true);
+// Memoized console output to avoid re-rendering entries on every keystroke
+const ConsoleOutput = memo(function ConsoleOutput({
+  entries,
+  isLoading,
+  isError,
+  refetch,
+  autoScroll,
+  onAutoScrollChange,
+}: {
+  entries: ConsoleEntry[];
+  isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
+  autoScroll: boolean;
+  onAutoScrollChange: (value: boolean) => void;
+}) {
   const outputRef = useRef<HTMLDivElement | null>(null);
-
-  const title = server?.name ?? serverId ?? 'Unknown server';
-  const isSuspended = server?.status === 'suspended';
-  const canSend = Boolean(serverId) && isConnected && server?.status === 'running' && !isSuspended;
 
   useEffect(() => {
     if (!outputRef.current || !autoScroll) return;
     outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [entries, autoScroll]);
 
+  const handleScroll = () => {
+    if (!outputRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
+    const nearBottom = scrollHeight - scrollTop - clientHeight < 24;
+    onAutoScrollChange(nearBottom);
+  };
+
+  return (
+    <div
+      ref={outputRef}
+      onScroll={handleScroll}
+      className="max-h-[60vh] overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-slate-600 dark:text-slate-200"
+    >
+      {isLoading ? <div className="text-slate-500 dark:text-slate-400 dark:text-slate-500">Loading recent logs...</div> : null}
+      {isError ? (
+        <div className="mb-2 rounded-md border border-rose-200 bg-rose-100/60 px-3 py-2 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+          <div className="flex items-center justify-between gap-3">
+            <span>Unable to load historical logs.</span>
+            <button
+              type="button"
+              className="rounded-md border border-rose-200 px-2 py-1 text-[11px] text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
+              onClick={() => refetch()}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!isLoading && entries.length === 0 ? (
+        <div className="text-slate-500 dark:text-slate-400 dark:text-slate-500">No console output yet.</div>
+      ) : (
+        entries.map((entry) => {
+          const timestampMatch = entry.data.match(timestampPattern);
+          const displayTimestamp = entry.timestamp ?? timestampMatch?.[1];
+          const cleanedData = timestampMatch ? entry.data.replace(timestampPattern, '') : entry.data;
+          return (
+            <div key={entry.id} className="flex gap-3">
+              <span
+                className={`mt-[2px] min-w-[64px] text-[10px] uppercase tracking-wide ${
+                  streamStyles[entry.stream] ?? 'text-slate-500 dark:text-slate-500'
+                }`}
+              >
+                {entry.stream}
+              </span>
+              {displayTimestamp ? (
+                <span className="mt-[2px] min-w-[120px] text-xs font-mono text-slate-500 dark:text-slate-400">
+                  {formatTimestamp(displayTimestamp)}
+                </span>
+              ) : null}
+              <span className="whitespace-pre-wrap break-words">{cleanedData}</span>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+});
+
+function ServerConsolePage() {
+  const { serverId } = useParams();
+  const { data: server } = useServer(serverId);
+  const { entries, send, isConnected, isLoading, isError, refetch, clear } = useConsole(serverId);
+  const [command, setCommand] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
+
+  const title = server?.name ?? serverId ?? 'Unknown server';
+  const isSuspended = server?.status === 'suspended';
+  const canSend = Boolean(serverId) && isConnected && server?.status === 'running' && !isSuspended;
+
   useEffect(() => {
     setAutoScroll(true);
+    autoScrollRef.current = true;
   }, [serverId]);
+
+  // Stable callback that avoids re-rendering ConsoleOutput when autoScroll doesn't change
+  const handleAutoScrollChange = useCallback((value: boolean) => {
+    if (autoScrollRef.current !== value) {
+      autoScrollRef.current = value;
+      setAutoScroll(value);
+    }
+  }, []);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSend) return;
     send(command);
     setCommand('');
-  };
-
-  const handleScroll = () => {
-    if (!outputRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = outputRef.current;
-    const nearBottom = scrollHeight - scrollTop - clientHeight < 24;
-    setAutoScroll(nearBottom);
+    handleAutoScrollChange(true);
   };
 
   const handleClear = () => {
     clear();
-    setAutoScroll(true);
+    handleAutoScrollChange(true);
   };
 
   return (
@@ -114,53 +200,14 @@ function ServerConsolePage() {
           <span>WebSocket console output</span>
           <span>{entries.length} lines</span>
         </div>
-        <div
-          ref={outputRef}
-          onScroll={handleScroll}
-          className="max-h-[60vh] overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-slate-600 dark:text-slate-200"
-        >
-          {isLoading ? <div className="text-slate-500 dark:text-slate-400 dark:text-slate-500">Loading recent logs...</div> : null}
-          {isError ? (
-            <div className="mb-2 rounded-md border border-rose-200 bg-rose-100/60 px-3 py-2 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-              <div className="flex items-center justify-between gap-3">
-                <span>Unable to load historical logs.</span>
-                <button
-                  type="button"
-                  className="rounded-md border border-rose-200 px-2 py-1 text-[11px] text-rose-600 transition-all duration-300 hover:border-rose-400 dark:border-rose-500/30 dark:text-rose-300"
-                  onClick={() => refetch()}
-                >
-                  Retry
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {!isLoading && entries.length === 0 ? (
-            <div className="text-slate-500 dark:text-slate-400 dark:text-slate-500">No console output yet.</div>
-          ) : (
-            entries.map((entry) => {
-              const timestampMatch = entry.data.match(timestampPattern);
-              const displayTimestamp = entry.timestamp ?? timestampMatch?.[1];
-              const cleanedData = timestampMatch ? entry.data.replace(timestampPattern, '') : entry.data;
-              return (
-                <div key={entry.id} className="flex gap-3">
-                  <span
-                    className={`mt-[2px] min-w-[64px] text-[10px] uppercase tracking-wide ${
-                      streamStyles[entry.stream] ?? 'text-slate-500 dark:text-slate-500'
-                    }`}
-                  >
-                    {entry.stream}
-                  </span>
-                  {displayTimestamp ? (
-                    <span className="mt-[2px] min-w-[120px] text-xs font-mono text-slate-500 dark:text-slate-400">
-                      {formatTimestamp(displayTimestamp)}
-                    </span>
-                  ) : null}
-                  <span className="whitespace-pre-wrap break-words">{cleanedData}</span>
-                </div>
-              );
-            })
-          )}
-        </div>
+        <ConsoleOutput
+          entries={entries}
+          isLoading={isLoading}
+          isError={isError}
+          refetch={refetch}
+          autoScroll={autoScroll}
+          onAutoScrollChange={handleAutoScrollChange}
+        />
         <form
           onSubmit={handleSubmit}
           className="flex items-center gap-3 border-t border-slate-200 px-4 py-3 dark:border-slate-800"

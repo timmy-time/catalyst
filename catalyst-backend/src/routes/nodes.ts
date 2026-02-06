@@ -6,6 +6,7 @@ import { randomBytes } from "crypto";
 import { listAvailableIps } from "../utils/ipam";
 import { Prisma } from "@prisma/client";
 import { auth } from "../auth";
+import { serialize } from '../utils/serialize';
 
 const ensureAdmin = async (
   prisma: PrismaClient,
@@ -185,7 +186,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: node });
+      reply.send(serialize({ success: true, data: node }));
     }
   );
 
@@ -204,7 +205,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: nodes });
+      reply.send(serialize({ success: true, data: nodes }));
     }
   );
 
@@ -235,7 +236,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Node not found" });
       }
 
-      reply.send({ success: true, data: node });
+      reply.send(serialize({ success: true, data: node }));
     }
   );
 
@@ -495,7 +496,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: updated });
+      reply.send(serialize({ success: true, data: updated }));
     }
   );
 
@@ -720,7 +721,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "No IP pool configured for this network" });
       }
 
-      reply.send({ success: true, data: available });
+      reply.send(serialize({ success: true, data: available }));
     }
   );
 
@@ -780,7 +781,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         orderBy: [{ ip: "asc" }, { port: "asc" }],
       });
 
-      reply.send({ success: true, data: allocations });
+      reply.send(serialize({ success: true, data: allocations }));
     }
   );
 
@@ -867,7 +868,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: updated });
+      reply.send(serialize({ success: true, data: updated }));
     }
   );
 

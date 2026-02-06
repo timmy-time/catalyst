@@ -254,7 +254,7 @@ export class WebSocketGateway {
       if (this.clients.size >= this.MAX_CLIENT_CONNECTIONS) {
         this.logger.warn('Client connection rejected: overall limit reached');
         socket.send(JSON.stringify({ type: 'error', error: 'Connection limit reached' }));
-        socket.end();
+        socket.close();
         return;
       }
       
@@ -282,7 +282,7 @@ export class WebSocketGateway {
             this.logger.warn({ userId: session.user.id, current: userConnections }, 'User connection limit reached');
             socket.send(JSON.stringify({ type: 'error', error: 'Too many connections for this user' }));
             this.clients.delete(clientId);
-            socket.end();
+            socket.close();
             return;
           }
           
@@ -310,14 +310,14 @@ export class WebSocketGateway {
       setTimeout(() => {
         const pending = this.clients.get(clientId);
         if (pending && !pending.authenticated) {
-          pending.socket.end();
+          pending.socket.close();
           this.clients.delete(clientId);
           this.logger.warn({ clientId }, "Client handshake timeout");
         }
       }, 5000);
     } catch (err) {
       this.logger.error(err, "Error in client connection");
-      socket.end();
+      socket.close();
     }
   }
 
@@ -454,7 +454,7 @@ export class WebSocketGateway {
             { nodeId, agent: Boolean(agent), token: Boolean(tokenValue) },
             `Agent authentication failed for node: ${nodeId}`,
           );
-          agent?.socket.end();
+          agent?.socket.close();
           this.agents.delete(nodeId);
           return;
         }
@@ -1337,7 +1337,7 @@ export class WebSocketGateway {
         const token = typeof message.token === "string" ? message.token : "";
         if (!token) {
           this.logger.warn({ clientId }, "client_handshake missing token and no cookie auth");
-          client.socket.end();
+          client.socket.close();
           this.clients.delete(clientId);
           return;
         }
@@ -1346,7 +1346,7 @@ export class WebSocketGateway {
         });
         if (!session) {
           this.logger.warn({ clientId }, "client_handshake invalid session");
-          client.socket.end();
+          client.socket.close();
           this.clients.delete(clientId);
           return;
         }
@@ -1560,7 +1560,7 @@ export class WebSocketGateway {
           serverId: server.id, 
           nodeId: server.nodeId, 
           hasAgent: !!agent, 
-          agentState: agent?.socket?.socket?.readyState 
+          agentState: agent?.socket?.readyState 
         }, "Routing console_input to agent");
         if (agent && agent.socket.readyState === 1) {
           agent.socket.send(
@@ -1725,7 +1725,7 @@ export class WebSocketGateway {
       for (const [nodeId, agent] of this.agents) {
         if (now - agent.lastHeartbeat > timeout) {
           this.logger.warn(`Agent heartbeat timeout: ${nodeId}`);
-          agent.socket.end();
+          agent.socket.close();
           this.agents.delete(nodeId);
           this.prisma.node.update({
             where: { id: nodeId },

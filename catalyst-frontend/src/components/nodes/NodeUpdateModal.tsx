@@ -37,9 +37,9 @@ function NodeUpdateModal({ node }: { node: NodeInfo }) {
   });
 
   return (
-    <div>
+    <>
       <button
-        className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500/30"
+        className="w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-all duration-300 hover:border-primary-500 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500/30"
         onClick={() => setOpen(true)}
       >
         Update
@@ -131,7 +131,7 @@ function NodeUpdateModal({ node }: { node: NodeInfo }) {
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 

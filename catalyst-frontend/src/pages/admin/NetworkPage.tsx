@@ -171,7 +171,7 @@ function NetworkPage() {
             </p>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[2fr,1fr]">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900/60">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <label className="block text-xs text-slate-500 dark:text-slate-300">

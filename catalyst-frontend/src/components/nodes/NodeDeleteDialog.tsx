@@ -25,9 +25,9 @@ function NodeDeleteDialog({ nodeId, nodeName }: Props) {
   });
 
   return (
-    <div>
+    <>
       <button
-        className="rounded-md bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg shadow-rose-500/20 transition-all duration-300 hover:bg-rose-500"
+        className="w-full rounded-md bg-rose-600 px-3 py-1 text-xs font-semibold text-white shadow-lg shadow-rose-500/20 transition-all duration-300 hover:bg-rose-500"
         onClick={() => setOpen(true)}
       >
         Delete
@@ -58,7 +58,7 @@ function NodeDeleteDialog({ nodeId, nodeName }: Props) {
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 

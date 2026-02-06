@@ -1,0 +1,349 @@
+@import 'tailwindcss';
+
+/* 
+  GLASSMORPHISM THEME - TEST.CSS
+  Import this file in main.tsx to override the default look.
+  
+  v2.0 - Enhanced with animations, terminal styling, and neon accents.
+*/
+
+@layer base {
+  :root {
+    /* Base Glass Variables */
+    --glass-border-opacity: 0.15;
+    --glass-bg-opacity: 0.65;
+    --glass-blur: 16px;
+    --glass-saturation: 180%;
+    --neon-glow: 0 0 10px;
+
+    /* Light Mode - Frosty Glass */
+    --background: 210 40% 98%; 
+    --foreground: 222 47% 11%;
+    
+    --card: 0 0% 100%; 
+    --card-foreground: 222 47% 11%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    
+    --primary: 189 94% 42%;
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    
+    --accent: 308 67% 56%;
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 214 20% 80%;
+    --input: 214 20% 90%;
+    --ring: 189 94% 42%;
+    
+    --radius: 1rem;
+    
+    /* Status Colors */
+    --status-online: 142 70% 50%;
+    --status-offline: 0 84% 60%;
+    --status-warning: 45 93% 47%;
+  }
+
+  .dark {
+    /* Dark Mode - Cyberpunk/Space Glass */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    /* Darker, deeper cards */
+    --card: 224 71% 4%; 
+    --card-foreground: 210 40% 98%;
+    
+    --popover: 224 71% 4%;
+    --popover-foreground: 210 40% 98%;
+    
+    --primary: 189 94% 42%;
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 217 32% 18%;
+    --secondary-foreground: 210 40% 98%;
+    
+    --muted: 217 32% 18%;
+    --muted-foreground: 215 20% 75%;
+    
+    --accent: 308 67% 56%;
+    --accent-foreground: 0 0% 100%;
+    
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 217 32% 25%;
+    --input: 217 32% 15%;
+    --ring: 189 94% 42%;
+  }
+}
+
+@layer base {
+  body {
+    background: 
+      /* Subtle mesh gradient */
+      radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%), 
+      radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 1) 0, transparent 50%), 
+      radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 1) 0, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(339, 49%, 30%, 0.5) 0, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(225, 39%, 30%, 0.5) 0, transparent 50%);
+    background-color: hsl(var(--background));
+    background-attachment: fixed;
+    background-size: cover;
+    min-height: 100vh;
+  }
+
+  :root:not(.dark) body {
+    background: 
+      radial-gradient(at 0% 0%, hsla(189, 100%, 96%, 1) 0, transparent 50%), 
+      radial-gradient(at 50% 100%, hsla(273, 100%, 96%, 1) 0, transparent 50%), 
+      radial-gradient(at 100% 0%, hsla(308, 100%, 96%, 1) 0, transparent 50%);
+    background-color: hsl(var(--background));
+  }
+
+  /* Custom Selection Color */
+  ::selection {
+    background: hsl(var(--brand-cyan) / 0.3);
+    color: inherit;
+  }
+}
+
+@layer utilities {
+  /* Enhanced Glass Utility */
+  .glass {
+    background: hsl(var(--card) / var(--glass-bg-opacity));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    border: 1px solid hsl(var(--border) / var(--glass-border-opacity));
+    box-shadow: 
+      0 4px 6px -1px rgba(0, 0, 0, 0.1), 
+      0 2px 4px -1px rgba(0, 0, 0, 0.06),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.1); 
+  }
+
+  /* Stronger glass for high contrast areas */
+  .glass-strong {
+    @apply glass;
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: blur(24px) saturate(180%);
+  }
+
+  .glass-hover {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .glass-hover:hover {
+    background: hsl(var(--card) / 0.9);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / 0.5);
+  }
+
+  .glass-panel {
+    @apply glass rounded-2xl p-6;
+  }
+
+  /* Neon Glow Effects for Statuses */
+  .glow-green {
+    box-shadow: 0 0 10px hsl(var(--status-online) / 0.5);
+    border-color: hsl(var(--status-online) / 0.5);
+  }
+  
+  .glow-red {
+    box-shadow: 0 0 10px hsl(var(--status-offline) / 0.5);
+    border-color: hsl(var(--status-offline) / 0.5);
+  }
+
+  /* Glass Form Elements */
+  .glass-input {
+    background: hsl(var(--input) / 0.2);
+    backdrop-filter: blur(8px);
+    border: 1px solid hsl(var(--border) / 0.3);
+    @apply rounded-xl px-4 py-2 outline-none transition-all duration-200;
+  }
+
+  .glass-input:focus {
+    background: hsl(var(--input) / 0.4);
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+    transform: translateY(-1px);
+  }
+
+  /* Glass Buttons with "Sheen" effect */
+  .glass-button {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.9), hsl(var(--primary) / 0.7));
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    @apply rounded-xl px-6 py-2.5 font-medium shadow-lg transition-all active:scale-95 hover:shadow-cyan-500/25;
+  }
+  
+  .glass-button::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 200%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: 0.5s;
+  }
+  
+  .glass-button:hover::after {
+    left: 100%;
+  }
+
+  /* Terminal Window Styling */
+  .glass-terminal {
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid hsl(var(--border) / 0.2);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    @apply rounded-xl p-4 shadow-2xl;
+  }
+}
+
+/* 
+   GLOBAL COMPONENT OVERRIDES 
+   Deep integration into shadcn/ui and standard elements
+*/
+
+/* 1. Main Layout Containers */
+.card, 
+[class*="bg-card"], 
+[class*="bg-background"],
+[role="dialog"],
+[data-state="open"] {
+  background-color: hsl(var(--card) / var(--glass-bg-opacity)) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(120%) !important;
+  border: 1px solid hsl(var(--border) / 0.3) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 2. Navigation & Sidebars - Frosty Sidebar */
+aside, nav, header {
+  background-color: hsl(var(--background) / 0.6) !important;
+  backdrop-filter: blur(20px) !important;
+  border-right: 1px solid hsl(var(--border) / 0.2) !important;
+  border-bottom: 1px solid hsl(var(--border) / 0.2) !important;
+  z-index: 50;
+}
+
+/* 3. Dropdowns, Popovers, Command Menu */
+[role="menu"], 
+[role="listbox"],
+[cmdk-root] {
+  background-color: hsl(var(--popover) / 0.8) !important;
+  backdrop-filter: blur(24px) !important;
+  border: 1px solid hsl(var(--border) / 0.2) !important;
+  box-shadow: 0 20px 40px -10px rgba(0,0,0,0.3) !important;
+  animation: glass-fade-in 0.2s ease-out;
+}
+
+/* 4. Inputs & Textareas */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+textarea,
+select,
+[cmdk-input] {
+  background-color: hsl(var(--input) / 0.2) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid hsl(var(--border) / 0.3) !important;
+  border-radius: 0.75rem !important;
+  transition: all 0.2s;
+}
+
+input:focus, textarea:focus, select:focus, [cmdk-input]:focus {
+  background-color: hsl(var(--input) / 0.4) !important;
+  border-color: hsl(var(--primary) / 0.8) !important;
+  box-shadow: 0 0 15px hsl(var(--primary) / 0.2) !important;
+}
+
+/* 5. Buttons - Vibrant Glass */
+button[class*="bg-primary"] {
+  background-image: linear-gradient(to bottom right, hsl(var(--primary)), hsl(var(--brand-cyan))) !important;
+  box-shadow: 0 4px 15px hsl(var(--primary) / 0.4) !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+button[class*="bg-primary"]:hover {
+  filter: brightness(1.2) !important;
+  box-shadow: 0 6px 20px hsl(var(--primary) / 0.6) !important;
+}
+
+/* 6. Console/Terminal Specifics */
+.xterm-viewport, .terminal-container {
+  background-color: rgba(10, 10, 15, 0.7) !important;
+  backdrop-filter: blur(8px);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* 7. Tables - Floating Rows */
+table {
+  border-collapse: separate;
+  border-spacing: 0 4px;
+}
+
+tr[class*="hover:bg-muted"]:hover td {
+  background-color: hsl(var(--accent) / 0.15) !important;
+  backdrop-filter: blur(4px);
+}
+
+/* 8. Skeleton Loaders - Shimmer Glass */
+[class*="animate-pulse"] {
+  background-color: hsl(var(--muted) / 0.3) !important;
+}
+
+/* 9. Scrollbars - Slim & Glassy */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 20px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.6);
+}
+
+/* Animations */
+@keyframes glass-fade-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes glass-slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-glass-in {
+  animation: glass-fade-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Dialog Overlay - Frosty Backdrop */
+[data-state="open"]::backdrop, 
+div[class*="bg-black/80"],
+div[class*="bg-background/80"] {
+  backdrop-filter: blur(8px) !important;
+  background-color: rgba(0,0,0,0.3) !important;
+}

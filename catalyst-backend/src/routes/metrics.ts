@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
+import { serialize } from '../utils/serialize';
 
 export async function metricsRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -82,7 +83,7 @@ export async function metricsRoutes(app: FastifyInstance) {
 
       // Return early if no metrics
       if (metrics.length === 0) {
-        return reply.send({
+        return reply.send(serialize({
           success: true,
           data: {
             latest: null,
@@ -90,7 +91,7 @@ export async function metricsRoutes(app: FastifyInstance) {
             history: [],
             count: 0,
           },
-        });
+        }));
       }
 
       // Aggregate into evenly spaced buckets across the requested time range.
@@ -207,7 +208,7 @@ export async function metricsRoutes(app: FastifyInstance) {
       const totalTime = Date.now() - startTime;
       app.log.info({ serverId, totalMs: totalTime }, "Total metrics endpoint time");
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         data: {
           latest,
@@ -215,7 +216,7 @@ export async function metricsRoutes(app: FastifyInstance) {
           history: normalizedMetrics, // chronological
           count: normalizedMetrics.length,
         },
-      });
+      }));
     }
   );
 
@@ -285,7 +286,7 @@ export async function metricsRoutes(app: FastifyInstance) {
       }
 
       if (!latest) {
-        return reply.send({
+        return reply.send(serialize({
           success: true,
           data: {
             message: "No metrics available yet",
@@ -297,10 +298,10 @@ export async function metricsRoutes(app: FastifyInstance) {
               allocatedCpuCores: server.allocatedCpuCores,
             },
           },
-        });
+        }));
       }
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         data: {
           cpuPercent: latest.cpuPercent,
@@ -318,7 +319,7 @@ export async function metricsRoutes(app: FastifyInstance) {
             status: server.status,
           },
         },
-      });
+      }));
     }
   );
 
@@ -376,7 +377,7 @@ export async function metricsRoutes(app: FastifyInstance) {
       // Get latest metrics
       const latest = metrics[0] || null;
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         data: {
           latest,
@@ -391,7 +392,7 @@ export async function metricsRoutes(app: FastifyInstance) {
             isOnline: node.isOnline,
           },
         },
-      });
+      }));
     }
   );
 }
