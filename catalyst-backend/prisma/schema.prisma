@@ -456,6 +456,33 @@ model Server {
   alerts         Alert[]
   ipAllocation   IpAllocation?
   allocations    NodeAllocation[]
+  installedMods  InstalledMod[]
+}
+
+// ============================================================================
+// INSTALLED MODS & PLUGINS TRACKING
+// ============================================================================
+
+model InstalledMod {
+  id            String   @id @default(cuid())
+  serverId      String
+  server        Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  filename      String
+  type          String   @default("mod") // mod, plugin, datapack, modpack
+  provider      String   // modrinth, curseforge, spigot, paper
+  game          String?
+  projectId     String
+  versionId     String
+  projectName   String?
+  latestVersionId String?
+  latestVersionName String?
+  updateCheckedAt DateTime?
+  hasUpdate     Boolean  @default(false)
+  installedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([serverId, filename])
+  @@index([serverId, type])
 }
 
 // ============================================================================

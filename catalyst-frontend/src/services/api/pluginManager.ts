@@ -5,6 +5,20 @@ export type PluginManagerSearchResponse = {
   data?: any[];
 };
 
+export type InstalledPlugin = {
+  name: string;
+  size: number;
+  modifiedAt: string | null;
+  provider: string | null;
+  projectId: string | null;
+  versionId: string | null;
+  projectName: string | null;
+  hasUpdate: boolean;
+  latestVersionId: string | null;
+  latestVersionName: string | null;
+  updateCheckedAt: string | null;
+};
+
 export const pluginManagerApi = {
   search: async (
     serverId: string,
@@ -34,12 +48,40 @@ export const pluginManagerApi = {
       provider: string;
       projectId: string;
       versionId: string | number;
+      projectName?: string;
     },
   ) => {
     const { data } = await apiClient.post<{ success: boolean; data?: { path: string } }>(
       `/api/servers/${serverId}/plugin-manager/install`,
       payload,
     );
+    return data.data;
+  },
+  installed: async (serverId: string) => {
+    const { data } = await apiClient.get<{ success: boolean; data: InstalledPlugin[] }>(
+      `/api/servers/${serverId}/plugin-manager/installed`,
+    );
+    return data.data ?? [];
+  },
+  uninstall: async (serverId: string, filename: string) => {
+    const { data } = await apiClient.post<{ success: boolean }>(
+      `/api/servers/${serverId}/plugin-manager/uninstall`,
+      { filename },
+    );
+    return data;
+  },
+  checkUpdates: async (serverId: string) => {
+    const { data } = await apiClient.post<{
+      success: boolean;
+      data: { checked: number; updatesAvailable: number };
+    }>(`/api/servers/${serverId}/plugin-manager/check-updates`);
+    return data.data;
+  },
+  update: async (serverId: string, filenames: string[]) => {
+    const { data } = await apiClient.post<{
+      success: boolean;
+      data: { filename: string; success: boolean; error?: string }[];
+    }>(`/api/servers/${serverId}/plugin-manager/update`, { filenames });
     return data.data;
   },
 };
