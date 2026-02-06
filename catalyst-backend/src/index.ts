@@ -7,7 +7,6 @@ import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyHelmet from "@fastify/helmet";
 import fastifyMultipart from "@fastify/multipart";
-import fastifyCompress from "@fastify/compress";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import pino from "pino";
@@ -281,13 +280,6 @@ async function bootstrap() {
       crossOriginEmbedderPolicy: false, // Allow WebSocket connections
     });
     
-    // Register compression for all responses (gzip/deflate/brotli)
-    await app.register(fastifyCompress, {
-      global: true,
-      threshold: 1024, // Only compress responses > 1KB
-      encodings: ['gzip', 'deflate', 'br'],
-    });
-
     await app.register(fastifyRateLimit, {
       global: true,
       max: 200, // Per-IP limit: 200 requests

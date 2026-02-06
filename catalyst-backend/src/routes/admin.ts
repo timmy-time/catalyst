@@ -14,6 +14,7 @@ import {
   upsertSecuritySettings,
   upsertSmtpSettings,
 } from '../services/mailer';
+import { serialize } from '../utils/serialize';
 
 export async function adminRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -1271,7 +1272,7 @@ export async function adminRoutes(app: FastifyInstance) {
       }
 
       const settings = await getSecuritySettings();
-      reply.send({ success: true, data: settings });
+      reply.send(serialize({ success: true, data: settings }));
     }
   );
 
@@ -1667,7 +1668,7 @@ export async function adminRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, data: updated });
+      reply.send(serialize({ success: true, data: updated }));
     }
   );
 
@@ -1715,7 +1716,7 @@ export async function adminRoutes(app: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
       });
 
-      reply.send({ success: true, data: hosts });
+      reply.send(serialize({ success: true, data: hosts }));
     }
   );
 
@@ -1840,7 +1841,7 @@ export async function adminRoutes(app: FastifyInstance) {
           details: { name: updated.name, host: updated.host, port: updated.port },
         });
 
-        reply.send({ success: true, data: updated });
+        reply.send(serialize({ success: true, data: updated }));
       } catch (error: any) {
         return reply.status(409).send({ error: 'Database host name already exists' });
       }
@@ -1890,7 +1891,7 @@ export async function adminRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Admin access required' });
       }
       const settings = await getSmtpSettings();
-      reply.send({ success: true, data: settings });
+      reply.send(serialize({ success: true, data: settings }));
     }
   );
 
@@ -1980,7 +1981,7 @@ export async function adminRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Admin access required' });
       }
       const settings = await getModManagerSettings();
-      reply.send({ success: true, data: settings });
+      reply.send(serialize({ success: true, data: settings }));
     }
   );
 
@@ -2039,7 +2040,7 @@ export async function adminRoutes(app: FastifyInstance) {
         });
       }
 
-      reply.send({ success: true, data: settings });
+      reply.send(serialize({ success: true, data: settings }));
     }
   );
 
@@ -2135,7 +2136,7 @@ export async function adminRoutes(app: FastifyInstance) {
         details: updateData,
       });
 
-      reply.send({ success: true, data: settings });
+      reply.send(serialize({ success: true, data: settings }));
     }
   );
 }

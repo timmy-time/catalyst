@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import cron from 'node-cron';
 import cronParser from 'cron-parser';
+import { serialize } from '../utils/serialize';
 
 export async function taskRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -127,7 +128,7 @@ export async function taskRoutes(app: FastifyInstance) {
         scheduler.scheduleTask(task);
       }
 
-      reply.send({ success: true, task });
+      reply.send(serialize({ success: true, task }));
     }
   );
 
@@ -170,7 +171,7 @@ export async function taskRoutes(app: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
       });
 
-      reply.send({ tasks });
+      reply.send(serialize({ tasks }));
     }
   );
 
@@ -219,7 +220,7 @@ export async function taskRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Task not found' });
       }
 
-      reply.send({ task });
+      reply.send(serialize({ task }));
     }
   );
 
@@ -292,7 +293,7 @@ export async function taskRoutes(app: FastifyInstance) {
         }
       }
 
-      reply.send({ success: true, task });
+      reply.send(serialize({ success: true, task }));
     }
   );
 

@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import { auth } from "../auth";
 import { logAuthAttempt } from "../middleware/audit";
 import { getSecuritySettings } from "../services/mailer";
+import { serialize } from '../utils/serialize';
 
 export async function authRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -473,7 +474,7 @@ export async function authRoutes(app: FastifyInstance) {
         body: { newPassword },
       });
 
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -489,7 +490,7 @@ export async function authRoutes(app: FastifyInstance) {
       if (!userRecord) {
         return reply.status(404).send({ error: "User not found" });
       }
-      reply.send({ success: true, data: userRecord });
+      reply.send(serialize({ success: true, data: userRecord }));
     }
   );
 
@@ -605,7 +606,7 @@ export async function authRoutes(app: FastifyInstance) {
           authorization: request.headers.authorization || "",
         }),
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -626,7 +627,7 @@ export async function authRoutes(app: FastifyInstance) {
           ...(authenticatorAttachment ? { authenticatorAttachment } : {}),
         },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -651,7 +652,7 @@ export async function authRoutes(app: FastifyInstance) {
           ...(name ? { name } : {}),
         },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -666,7 +667,7 @@ export async function authRoutes(app: FastifyInstance) {
         }),
         body: { id },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -685,7 +686,7 @@ export async function authRoutes(app: FastifyInstance) {
         }),
         body: { id, name },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -699,7 +700,7 @@ export async function authRoutes(app: FastifyInstance) {
           authorization: request.headers.authorization || "",
         }),
       });
-      reply.send({ success: true, data: accounts });
+      reply.send(serialize({ success: true, data: accounts }));
     }
   );
 
@@ -720,7 +721,7 @@ export async function authRoutes(app: FastifyInstance) {
           callbackURL: `${process.env.FRONTEND_URL || "http://localhost:5173"}/profile`,
         },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 
@@ -741,7 +742,7 @@ export async function authRoutes(app: FastifyInstance) {
         }),
         body: { providerId, accountId },
       });
-      reply.send({ success: true, data: response });
+      reply.send(serialize({ success: true, data: response }));
     }
   );
 }

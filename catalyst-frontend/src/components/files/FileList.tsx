@@ -109,7 +109,7 @@ function FileList({
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[620px] divide-y divide-slate-200 dark:divide-slate-800">
-        <div className="grid grid-cols-[24px,1fr,96px,120px,160px,36px] gap-3 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 dark:text-slate-500">
+        <div className="grid grid-cols-[24px_1fr_96px_120px_160px_36px] gap-3 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400 dark:text-slate-500">
           <span />
           <span>Name</span>
           <span>Mode</span>
@@ -122,7 +122,7 @@ function FileList({
           return (
             <div
               key={entry.path}
-              className={`grid grid-cols-[24px,1fr,96px,120px,160px,36px] items-center gap-3 px-4 py-2 text-sm ${
+              className={`grid grid-cols-[24px_1fr_96px_120px_160px_36px] items-center gap-3 px-4 py-2 text-sm ${
                 selected
                   ? 'bg-primary-500/10 text-primary-600 dark:bg-primary-500/20 dark:text-primary-400'
                   : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'

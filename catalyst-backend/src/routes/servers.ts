@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
+import { serialize } from '../utils/serialize';
 import { v4 as uuidv4 } from "uuid";
 import { decryptBackupConfig, encryptBackupConfig, redactBackupConfig } from "../services/backup-credentials";
 import { ServerStateMachine } from "../services/state-machine";
@@ -1092,7 +1093,7 @@ export async function serverRoutes(app: FastifyInstance) {
         latestMetrics.map((metric) => [metric.serverId, metric])
       );
 
-      reply.send({
+      reply.send(serialize({
         success: true,
         data: servers.map((server) => {
           const metrics = latestMetricsByServer.get(server.id) as any;
@@ -1106,7 +1107,7 @@ export async function serverRoutes(app: FastifyInstance) {
             diskTotalMb,
           };
         }),
-      });
+      }));
     }
   );
 

@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
+import { serialize } from '../utils/serialize';
 
 const ensureAdmin = async (
   prisma: PrismaClient,
@@ -63,7 +64,7 @@ export async function templateRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Template not found" });
       }
 
-      reply.send({ success: true, data: template });
+      reply.send(serialize({ success: true, data: template }));
     }
   );
 
@@ -212,7 +213,7 @@ export async function templateRoutes(app: FastifyInstance) {
         data: nextData as any,
       });
 
-      reply.send({ success: true, data: updated });
+      reply.send(serialize({ success: true, data: updated }));
     }
   );
 

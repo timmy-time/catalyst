@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
+import { serialize } from '../utils/serialize';
 
 export async function alertRoutes(app: FastifyInstance) {
   // Using shared prisma instance from db.ts
@@ -145,7 +146,7 @@ export async function alertRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send({ success: true, rule });
+      reply.send(serialize({ success: true, rule }));
     }
   );
 
@@ -178,7 +179,7 @@ export async function alertRoutes(app: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
       });
 
-      reply.send({ rules });
+      reply.send(serialize({ rules }));
     }
   );
 
@@ -202,7 +203,7 @@ export async function alertRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      reply.send({ rule });
+      reply.send(serialize({ rule }));
     }
   );
 
@@ -257,7 +258,7 @@ export async function alertRoutes(app: FastifyInstance) {
         data: updateData,
       });
 
-      reply.send({ success: true, rule });
+      reply.send(serialize({ success: true, rule }));
     }
   );
 
@@ -460,7 +461,7 @@ export async function alertRoutes(app: FastifyInstance) {
         }
       }
 
-      reply.send({ alert });
+      reply.send(serialize({ alert }));
     }
   );
 
