@@ -2,7 +2,7 @@ import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { listAvailableIps } from "../utils/ipam";
 import { Prisma } from "@prisma/client";
 import { auth } from "../auth";
@@ -188,7 +188,8 @@ export async function nodeRoutes(app: FastifyInstance) {
         },
       });
 
-      reply.send(serialize({ success: true, data: node }));
+      const { secret: _secret, ...safeNode } = node;
+      reply.send(serialize({ success: true, data: safeNode }));
     }
   );
 
@@ -200,6 +201,7 @@ export async function nodeRoutes(app: FastifyInstance) {
       const isAdmin = await ensureAdmin(prisma, request.user.userId, reply, "admin.read");
       if (!isAdmin) return;
       const nodes = await prisma.node.findMany({
+        omit: { secret: true },
         include: {
           _count: {
             select: { servers: true },
@@ -222,6 +224,7 @@ export async function nodeRoutes(app: FastifyInstance) {
 
       const node = await prisma.node.findUnique({
         where: { id: nodeId },
+        omit: { secret: true },
         include: {
           servers: {
             select: {
@@ -610,7 +613,11 @@ export async function nodeRoutes(app: FastifyInstance) {
         where: { id: nodeId },
       });
 
-      if (!node || node.secret !== secret) {
+      if (
+        !node ||
+        secret.length !== node.secret.length ||
+        !timingSafeEqual(Buffer.from(secret), Buffer.from(node.secret))
+      ) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
 

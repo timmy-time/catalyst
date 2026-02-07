@@ -13,6 +13,11 @@ yarn-error.log*
 .env.*.local
 .env.production.local
 
+# Secrets / keys
+sftp_host_key
+*.pem
+*.key
+
 # IDE
 .vscode/
 .idea/
