@@ -2,6 +2,7 @@ import "dotenv/config";
 import Fastify from "fastify";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import fastifyWebsocket from "@fastify/websocket";
 import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
@@ -35,14 +36,16 @@ import { normalizeHostIp } from "./utils/ipam";
 import { PluginLoader } from "./plugins/loader";
 import { pluginRoutes } from "./routes/plugins";
 
-const logger = pino({
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-    },
-  },
-});
+const logger = pino(
+  process.env.NODE_ENV === "production"
+    ? { level: process.env.LOG_LEVEL || "info" }
+    : {
+        transport: {
+          target: "pino-pretty",
+          options: { colorize: true },
+        },
+      }
+);
 
 const app = Fastify({
   logger: true,
@@ -52,9 +55,13 @@ const app = Fastify({
 app.setErrorHandler((error, _request, reply) => {
   app.log.error(error);
   const status = (error as any).statusCode && (error as any).statusCode >= 400 ? (error as any).statusCode : 500;
-  reply.status(status).send({
-    error: status === 500 ? "Internal Server Error" : (error as Error).message,
-  });
+  let message = "Internal Server Error";
+  if (status !== 500) {
+    // Only expose validation/client error messages, never Prisma or internal details
+    const raw = (error as Error).message || "";
+    message = raw.includes("\n") || raw.length > 200 ? "Bad Request" : raw;
+  }
+  reply.status(status).send({ error: message });
 });
 
 const wsGateway = new WebSocketGateway(prisma, logger);
@@ -278,6 +285,9 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false, // Allow WebSocket connections
+      hsts: process.env.NODE_ENV === "production"
+        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        : false,
     });
     
     await app.register(fastifyRateLimit, {
@@ -308,7 +318,8 @@ async function bootstrap() {
           return false;
         }
         const node = await prisma.node.findUnique({ where: { id: nodeId as string } });
-        return Boolean(node && node.secret === token);
+        if (!node || token.length !== node.secret.length) return false;
+        return crypto.timingSafeEqual(Buffer.from(node.secret), Buffer.from(token));
       },
       skipOnError: false,
     });
@@ -325,7 +336,7 @@ async function bootstrap() {
       'http://localhost:5173', // Vite dev server
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173',
-      process.env.CORS_ORIGIN,
+      ...(process.env.CORS_ORIGIN?.split(',').map(s => s.trim()) ?? []),
     ].filter(Boolean) as string[];
     const isAllowedOrigin = (origin?: string) =>
       Boolean(origin && allowedOrigins.includes(origin));

@@ -21,6 +21,10 @@ COPY prisma ./prisma
 # Build TypeScript
 RUN npm run build
 
+# Create non-root user
+RUN addgroup -S catalyst && adduser -S catalyst -G catalyst
+USER catalyst
+
 # Expose port
 EXPOSE 3000
 
