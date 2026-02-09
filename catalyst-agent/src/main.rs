@@ -83,17 +83,9 @@ impl CatalystAgent {
         });
 
         // Start HTTP server for local management
-        let agent = self.clone_refs();
-        let http_task = tokio::spawn(async move {
-            if let Err(e) = agent.start_http_server().await {
-                error!("HTTP server error: {}", e);
-            }
-        });
-
         tokio::select! {
             _ = ws_task => {},
             _ = health_task => {},
-            _ = http_task => {},
         }
 
         Ok(())
@@ -115,26 +107,6 @@ impl CatalystAgent {
                 warn!("Failed to send resource stats: {}", err);
             }
         }
-    }
-
-    async fn start_http_server(&self) -> AgentResult<()> {
-        use axum::{
-            routing::get,
-            Router,
-        };
-
-        let app = Router::new()
-            .route("/health", get(|| async { "ok" }))
-            .route("/stats", get(|| async { "stats" }))
-            .route("/containers", get(|| async { "containers" }));
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
-
-        info!("Local HTTP server listening on 127.0.0.1:8080");
-
-        axum::serve(listener, app)
-            .await
-            .map_err(|e| AgentError::NetworkError(e.to_string()))
     }
 
     fn clone_refs(&self) -> Self {

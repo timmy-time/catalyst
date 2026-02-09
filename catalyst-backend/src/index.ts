@@ -503,7 +503,40 @@ async function bootstrap() {
       );
 
       if (!fs.existsSync(agentPath)) {
-        return reply.status(404).send({ error: "Agent binary not found" });
+        // Attempt to build the agent automatically (only in development)
+        if (process.env.NODE_ENV === "production") {
+          return reply.status(404).send({ error: "Agent binary not found. Please build with 'cargo build --release' in catalyst-agent/" });
+        }
+
+        app.log.warn("Agent binary not found, attempting to build...");
+        
+        const agentDir = path.resolve(process.cwd(), "..", "catalyst-agent");
+        if (!fs.existsSync(agentDir)) {
+          return reply.status(404).send({ error: "Agent source code not found" });
+        }
+
+        try {
+          const { execSync } = await import("child_process");
+          app.log.info("Building agent with 'cargo build --release'...");
+          
+          execSync("cargo build --release", {
+            cwd: agentDir,
+            stdio: "inherit",
+            timeout: 300000, // 5 minutes
+          });
+
+          app.log.info("Agent built successfully");
+
+          if (!fs.existsSync(agentPath)) {
+            return reply.status(500).send({ error: "Agent build completed but binary not found" });
+          }
+        } catch (err) {
+          app.log.error({ err }, "Failed to build agent");
+          return reply.status(500).send({ 
+            error: "Failed to build agent binary",
+            details: err instanceof Error ? err.message : String(err)
+          });
+        }
       }
 
       reply.header("Content-Type", "application/octet-stream");
