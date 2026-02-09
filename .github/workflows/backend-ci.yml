@@ -33,25 +33,32 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: 'catalyst-backend/package-lock.json'
 
       - name: Install dependencies
+        working-directory: catalyst-backend
         run: npm ci
 
       - name: Security audit
+        working-directory: catalyst-backend
         run: npm audit --audit-level=high
 
       - name: Lint
+        working-directory: catalyst-backend
         run: npm run lint
 
       - name: Build
+        working-directory: catalyst-backend
         run: npm run build
 
       - name: Database migration
+        working-directory: catalyst-backend
         run: npm run db:push
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test_db
 
       - name: Run tests
+        working-directory: catalyst-backend
         run: npm test
 
   security:
