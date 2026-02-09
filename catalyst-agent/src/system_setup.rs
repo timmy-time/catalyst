@@ -202,9 +202,21 @@ impl SystemSetup {
         if has_systemctl {
             Self::run_command("systemctl", &["daemon-reload"], None)?;
             Self::run_command("systemctl", &["enable", "--now", "containerd"], None)?;
-            Self::run_command("systemctl", &["restart", "containerd"], None)?;
+            let status = Command::new("systemctl")
+                .args(["is-active", "--quiet", "containerd"])
+                .status()
+                .map_err(|e| AgentError::IoError(format!("Failed to check containerd: {}", e)))?;
+            if !status.success() {
+                Self::run_command("systemctl", &["start", "containerd"], None)?;
+            }
         } else {
             warn!("systemctl not available; containerd must be managed manually");
+        }
+
+        let mut attempts = 10;
+        while attempts > 0 && !Path::new("/run/containerd/containerd.sock").exists() {
+            attempts -= 1;
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
 
         if !Path::new("/run/containerd/containerd.sock").exists() {

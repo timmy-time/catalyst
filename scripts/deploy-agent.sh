@@ -11,7 +11,7 @@ NODE_SECRET="${3:-}"
 NODE_API_KEY="${4:-}"
 NODE_HOSTNAME="${5:-$(hostname -f 2>/dev/null || hostname)}"
 
-NERDCTL_VERSION="1.8.1"
+NERDCTL_VERSION="2.2.1"
 CNI_PLUGINS_VERSION="v1.4.1"
 
 log() { echo "[deploy-agent] $*"; }
@@ -263,16 +263,26 @@ Requires=containerd.service
 [Service]
 Type=simple
 User=root
+Group=root
 WorkingDirectory=/opt/catalyst-agent
 ExecStart=/opt/catalyst-agent/catalyst-agent --config /opt/catalyst-agent/config.toml
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
-NoNewPrivileges=true
-ProtectHome=true
-ProtectSystem=full
+
+# Security: Agent must run as root to manage containers via containerd socket
+# The agent needs unrestricted access to:
+# - /run/containerd/containerd.sock (container management)
+# - /var/lib/catalyst (server data, backups)
+# - /var/lib/cni and /etc/cni/net.d (container networking)
+# - /tmp/catalyst-console (console I/O pipes)
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
 PrivateTmp=false
-ReadWritePaths=/var/lib/catalyst /tmp/catalyst-console /etc/cni/net.d /var/lib/cni /mnt
+
+# Ensure access to required paths
+ReadWritePaths=/var/lib/catalyst /tmp/catalyst-console /etc/cni/net.d /var/lib/cni /mnt /run/containerd
 
 [Install]
 WantedBy=multi-user.target
@@ -283,16 +293,48 @@ require_systemd() {
     command -v systemctl >/dev/null 2>&1 || fail "systemctl is required for deployment."
 }
 
+ensure_containerd_service() {
+    systemctl unmask containerd >/dev/null 2>&1 || true
+    systemctl reset-failed containerd >/dev/null 2>&1 || true
+}
+
+wait_for_containerd() {
+    local attempts=30
+    local i
+    for i in $(seq 1 "$attempts"); do
+        if systemctl is-active --quiet containerd; then
+            return 0
+        fi
+        if [ -S /run/containerd/containerd.sock ]; then
+            log "containerd socket is present; proceeding despite inactive systemd state"
+            return 0
+        fi
+        sleep 1
+    done
+
+    systemctl status containerd --no-pager >&2 || true
+    journalctl -u containerd -n 80 --no-pager >&2 || true
+    fail "containerd failed to start. Review the logs above and /etc/containerd/config.toml."
+}
+
 start_services() {
     systemctl daemon-reload
+    ensure_containerd_service
+    log "Enabling and starting containerd..."
     systemctl enable --now containerd
-    systemctl restart containerd
+    wait_for_containerd
     systemctl enable --now catalyst-agent
 }
 
 verify_install() {
     sleep 2
-    systemctl is-active --quiet containerd || fail "containerd is not active."
+    if ! systemctl is-active --quiet containerd; then
+        if [ -S /run/containerd/containerd.sock ]; then
+            log "containerd socket is present; continuing despite inactive systemd state"
+        else
+            fail "containerd is not active."
+        fi
+    fi
     systemctl is-active --quiet catalyst-agent || {
         journalctl -u catalyst-agent -n 50 --no-pager >&2 || true
         fail "catalyst-agent failed to start."
