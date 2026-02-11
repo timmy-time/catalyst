@@ -17,7 +17,7 @@ impl SystemSetup {
         let pkg_manager = Self::detect_package_manager()?;
         info!("✓ Detected package manager: {}", pkg_manager);
 
-        // 2. Check and install containerd/nerdctl
+        // 2. Check and install containerd
         Self::ensure_container_runtime(&pkg_manager).await?;
 
         // 3. Ensure low-level OCI runtime is available
@@ -71,12 +71,6 @@ impl SystemSetup {
 
     /// Ensure container runtime is installed
     async fn ensure_container_runtime(pkg_manager: &str) -> Result<(), AgentError> {
-        let has_nerdctl = Command::new("which")
-            .arg("nerdctl")
-            .output()
-            .map_err(|e| AgentError::IoError(format!("Failed to check nerdctl: {}", e)))?
-            .status
-            .success();
         let has_containerd = Command::new("which")
             .arg("containerd")
             .output()
@@ -84,8 +78,8 @@ impl SystemSetup {
             .status
             .success();
 
-        if has_nerdctl && has_containerd {
-            info!("✓ containerd and nerdctl already installed");
+        if has_containerd {
+            info!("✓ containerd already installed");
             return Ok(());
         }
 
@@ -114,7 +108,7 @@ impl SystemSetup {
             _ => {
                 warn!("Automatic installation not supported for {}", pkg_manager);
                 return Err(AgentError::InternalError(format!(
-                    "Please install containerd/nerdctl manually for {}",
+                    "Please install containerd manually for {}",
                     pkg_manager
                 )));
             }
@@ -124,19 +118,6 @@ impl SystemSetup {
             return Err(AgentError::InternalError(
                 "Failed to install containerd package".to_string(),
             ));
-        }
-
-        // Install nerdctl if not bundled
-        if !Command::new("which")
-            .arg("nerdctl")
-            .output()
-            .map_err(|e| AgentError::IoError(format!("Failed to check nerdctl: {}", e)))?
-            .status
-            .success()
-        {
-            warn!("Installing nerdctl...");
-            Self::ensure_download_tools(pkg_manager).await?;
-            Self::install_nerdctl().await?;
         }
 
         info!("✓ Container runtime installed");
@@ -430,53 +411,6 @@ impl SystemSetup {
         REQUIRED
             .iter()
             .all(|name| Path::new(&format!("/opt/cni/bin/{}", name)).exists())
-    }
-
-    /// Install nerdctl from GitHub releases
-    async fn install_nerdctl() -> Result<(), AgentError> {
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "amd64",
-            "aarch64" => "arm64",
-            other => other,
-        };
-        let version = "1.7.6"; // Update as needed
-        let checksum = match arch {
-            "amd64" => "2f8992aef6a80d2e0cdd06c6c8f47d7d9e1c17b3ad2f0fbb7f2e8b4d29506f72",
-            "arm64" => "b30d7c3b7eb2f5a8a9fa0c5c2b9d0bd235897d704540b2c8d7f2f1c7a2ff8e1a",
-            _ => {
-                return Err(AgentError::InternalError(format!(
-                    "Unsupported architecture for nerdctl install: {}",
-                    arch
-                )));
-            }
-        };
-
-        let url = format!(
-            "https://github.com/containerd/nerdctl/releases/download/v{}/nerdctl-{}-linux-{}.tar.gz",
-            version, version, arch
-        );
-
-        info!("Downloading nerdctl from {}", url);
-
-        let archive_path = format!("/tmp/nerdctl-{}-linux-{}.tar.gz", version, arch);
-        Self::run_command("curl", &["-fsSL", "-o", &archive_path, &url], None)?;
-        let verify_cmd = format!("{}  {}", checksum, archive_path);
-        Self::run_command("sha256sum", &["-c", "--strict", "-"], Some(&verify_cmd))?;
-        Self::run_command(
-            "tar",
-            &[
-                "-xz",
-                "-C",
-                "/usr/local/bin",
-                "nerdctl",
-                "-f",
-                &archive_path,
-            ],
-            None,
-        )?;
-        let _ = fs::remove_file(&archive_path);
-
-        Ok(())
     }
 
     /// Setup CNI networking with macvlan and host-local IPAM (static IPs)

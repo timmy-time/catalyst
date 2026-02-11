@@ -11,7 +11,6 @@ When the agent starts, it automatically:
 ### 1. **Container Runtime**
 - Detects system package manager (apt, yum, dnf, pacman, zypper)
 - Installs `containerd` if not present
-- Downloads and installs `nerdctl` from GitHub releases
 - Verifies installation and readiness
 
 -### 2. **CNI Networking**
@@ -126,7 +125,7 @@ Use the provided test script to verify setup:
 ```
 
 This checks:
-- ✓ nerdctl installation
+- ✓ containerd installation
 - ✓ CNI plugins present (bridge, macvlan, host-local, etc.)
 - ✓ macvlan static network config created at `/etc/cni/net.d/mc-lan-static.conflist`
 
@@ -170,7 +169,7 @@ curl -fsSL https://github.com/containernetworking/plugins/releases/download/v1.4
 
 1. Confirm the static macvlan network config is present: `cat /etc/cni/net.d/mc-lan-static.conflist`
 2. Ensure the detected interface IP is in the same CIDR as the configured subnet
-3. Test container creation: `nerdctl run --network mc-lan-static alpine ip addr`
+3. Test container creation: `ctr run --rm --net-host docker.io/library/alpine:latest test-ip ip addr`
 
 ## Production Deployment
 

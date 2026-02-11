@@ -11,8 +11,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 use sysinfo::{Disks, System};
-use tokio::io::AsyncWriteExt;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -614,7 +613,7 @@ impl WebSocketHandler {
             // This replaces polling and provides instant notification when containers exit
             let monitor = tokio::spawn(async move {
                 // Subscribe to container events
-                let mut event_stream = match monitor_handler
+                let event_stream = match monitor_handler
                     .runtime
                     .subscribe_to_container_events(&monitor_container_id)
                     .await
@@ -659,27 +658,16 @@ impl WebSocketHandler {
                     }
                 };
 
-                // Take stdout from the event stream
-                let stdout = match event_stream.stdout.take() {
-                    Some(out) => out,
-                    None => {
-                        error!(
-                            "Failed to capture event stream stdout for {}",
-                            monitor_container_id
-                        );
-                        return;
-                    }
-                };
+                // Take the event receiver from the containerd stream
+                let mut receiver = event_stream.receiver;
 
-                let mut reader = tokio::io::BufReader::new(stdout).lines();
-
-                // Read events line by line
-                while let Ok(Some(event)) = reader.next_line().await {
-                    let event = event.trim();
-                    debug!("Container {} event: {}", monitor_container_id, event);
+                // Read events from containerd gRPC streaming
+                while let Ok(Some(envelope)) = receiver.message().await {
+                    let topic = &envelope.topic;
+                    debug!("Container {} event topic: {}", monitor_container_id, topic);
 
                     // Check for exit-related events
-                    if event == "die" || event == "stop" || event == "kill" {
+                    if topic.contains("/tasks/exit") || topic.contains("/tasks/delete") {
                         // Container has stopped, get exit code
                         let exit_code = monitor_handler
                             .runtime
@@ -703,8 +691,8 @@ impl WebSocketHandler {
                     }
                 }
 
-                // Clean up the event stream process
-                let _ = event_stream.wait().await;
+                // Clean up
+                drop(receiver);
             });
             tasks.insert(server_id, monitor);
             // Lock is held until end of scope, ensuring atomic operation
@@ -803,85 +791,94 @@ impl WebSocketHandler {
 
         // Execute the install script in an ephemeral container for complete isolation
         // The container mounts the server directory at /data and runs the script there
-        let mut child = self
+        let installer = self
             .runtime
             .spawn_installer_container(install_image, &final_script, &env_map, &server_dir)
             .await
             .map_err(|e| AgentError::IoError(format!("Failed to spawn installer container: {}", e)))?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stdout".to_string()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stderr".to_string()))?;
-
-        let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-        let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+        // Tail stdout/stderr files from the installer container
+        let mut stdout_pos = 0u64;
+        let mut stderr_pos = 0u64;
         let mut stdout_buffer = String::new();
         let mut stderr_buffer = String::new();
-        let mut stdout_done = false;
-        let mut stderr_done = false;
 
-        while !stdout_done || !stderr_done {
-            tokio::select! {
-                line = stdout_reader.next_line(), if !stdout_done => {
-                    match line {
-                        Ok(Some(entry)) => {
-                            let payload = format!("{}\n", entry);
-                            stdout_buffer.push_str(&payload);
-                            self.emit_console_output(server_id, "stdout", &payload).await?;
-                        }
-                        Ok(None) => stdout_done = true,
-                        Err(err) => {
-                            stdout_done = true;
-                            error!("Failed to read install stdout: {}", err);
-                        }
+        loop {
+            // Read new stdout content
+            if let Ok(content) = tokio::fs::read_to_string(&installer.stdout_path).await {
+                if (stdout_pos as usize) < content.len() {
+                    for line in content[stdout_pos as usize..].lines() {
+                        let payload = format!("{}\n", line);
+                        stdout_buffer.push_str(&payload);
+                        self.emit_console_output(server_id, "stdout", &payload).await?;
                     }
-                }
-                line = stderr_reader.next_line(), if !stderr_done => {
-                    match line {
-                        Ok(Some(entry)) => {
-                            let payload = format!("{}\n", entry);
-                            stderr_buffer.push_str(&payload);
-                            self.emit_console_output(server_id, "stderr", &payload).await?;
-                        }
-                        Ok(None) => stderr_done = true,
-                        Err(err) => {
-                            stderr_done = true;
-                            error!("Failed to read install stderr: {}", err);
-                        }
-                    }
+                    stdout_pos = content.len() as u64;
                 }
             }
-        }
-
-        let status = child.wait().await.map_err(|e| {
-            AgentError::IoError(format!("Failed to wait for install script: {}", e))
-        })?;
-
-        if !status.success() {
-            let stderr_trimmed = stderr_buffer.trim();
-            let stdout_trimmed = stdout_buffer.trim();
-            let reason = if !stderr_trimmed.is_empty() {
-                stderr_trimmed.to_string()
-            } else if !stdout_trimmed.is_empty() {
-                stdout_trimmed.to_string()
-            } else {
-                "Install script failed".to_string()
-            };
-            self.emit_console_output(server_id, "stderr", &format!("{}\n", reason))
-                .await?;
-            // The fourth argument is an optional metadata/progress payload for the state update;
-            // we pass None here because the install failed and there is no additional data to attach.
-            self.emit_server_state_update(server_id, "error", Some(reason.clone()), None, None)
-                .await?;
-            return Err(AgentError::InstallationError(format!(
-                "Install script failed: {}",
-                reason
-            )));
+            // Read new stderr content
+            if let Ok(content) = tokio::fs::read_to_string(&installer.stderr_path).await {
+                if (stderr_pos as usize) < content.len() {
+                    for line in content[stderr_pos as usize..].lines() {
+                        let payload = format!("{}\n", line);
+                        stderr_buffer.push_str(&payload);
+                        self.emit_console_output(server_id, "stderr", &payload).await?;
+                    }
+                    stderr_pos = content.len() as u64;
+                }
+            }
+            // Check if the installer container has exited
+            match tokio::time::timeout(Duration::from_millis(200), installer.wait()).await {
+                Ok(Ok(exit_code)) => {
+                    // Read any remaining output
+                    if let Ok(content) = tokio::fs::read_to_string(&installer.stdout_path).await {
+                        if (stdout_pos as usize) < content.len() {
+                            for line in content[stdout_pos as usize..].lines() {
+                                let payload = format!("{}\n", line);
+                                stdout_buffer.push_str(&payload);
+                                self.emit_console_output(server_id, "stdout", &payload).await?;
+                            }
+                        }
+                    }
+                    if let Ok(content) = tokio::fs::read_to_string(&installer.stderr_path).await {
+                        if (stderr_pos as usize) < content.len() {
+                            for line in content[stderr_pos as usize..].lines() {
+                                let payload = format!("{}\n", line);
+                                stderr_buffer.push_str(&payload);
+                                self.emit_console_output(server_id, "stderr", &payload).await?;
+                            }
+                        }
+                    }
+                    let _ = installer.cleanup().await;
+                    if exit_code != 0 {
+                        let stderr_trimmed = stderr_buffer.trim();
+                        let stdout_trimmed = stdout_buffer.trim();
+                        let reason = if !stderr_trimmed.is_empty() {
+                            stderr_trimmed.to_string()
+                        } else if !stdout_trimmed.is_empty() {
+                            stdout_trimmed.to_string()
+                        } else {
+                            "Install script failed".to_string()
+                        };
+                        self.emit_console_output(server_id, "stderr", &format!("{}\n", reason))
+                            .await?;
+                        self.emit_server_state_update(server_id, "error", Some(reason.clone()), None, None)
+                            .await?;
+                        return Err(AgentError::InstallationError(format!(
+                            "Install script failed: {}",
+                            reason
+                        )));
+                    }
+                    break;
+                }
+                Ok(Err(e)) => {
+                    let _ = installer.cleanup().await;
+                    return Err(AgentError::IoError(format!("Installer wait failed: {}", e)));
+                }
+                Err(_) => {
+                    // Timeout: container still running, continue tailing
+                    continue;
+                }
+            }
         }
 
         if stdout_buffer.trim().is_empty() && stderr_buffer.trim().is_empty() {
@@ -949,52 +946,61 @@ impl WebSocketHandler {
     }
 
     async fn stream_container_logs(&self, server_id: &str, container_id: &str) -> AgentResult<()> {
-        let mut child = self.runtime.spawn_log_stream(container_id).await?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stdout".to_string()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stderr".to_string()))?;
+        let _log_stream = self.runtime.spawn_log_stream(container_id).await?;
+        let base = std::path::PathBuf::from("/tmp/catalyst-console").join(container_id);
+        let stdout_path = base.join("stdout");
+        let stderr_path = base.join("stderr");
 
-        let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-        let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
-        let mut stdout_done = false;
-        let mut stderr_done = false;
+        let mut stdout_pos = 0u64;
+        let mut stderr_pos = 0u64;
 
-        while !stdout_done || !stderr_done {
-            tokio::select! {
-                line = stdout_reader.next_line(), if !stdout_done => {
-                    match line? {
-                        Some(entry) => {
-                            let payload = format!("{}\n", entry);
-                            self.emit_console_output(server_id, "stdout", &payload).await?;
-                        }
-                        None => stdout_done = true,
+        // Tail the stdout/stderr files
+        loop {
+            let running = self.runtime.is_container_running(container_id).await.unwrap_or(false);
+            let mut had_data = false;
+
+            if let Ok(content) = tokio::fs::read_to_string(&stdout_path).await {
+                if (stdout_pos as usize) < content.len() {
+                    for line in content[stdout_pos as usize..].lines() {
+                        let payload = format!("{}\n", line);
+                        self.emit_console_output(server_id, "stdout", &payload).await?;
                     }
-                }
-                line = stderr_reader.next_line(), if !stderr_done => {
-                    match line? {
-                        Some(entry) => {
-                            let payload = format!("{}\n", entry);
-                            self.emit_console_output(server_id, "stderr", &payload).await?;
-                        }
-                        None => stderr_done = true,
-                    }
+                    stdout_pos = content.len() as u64;
+                    had_data = true;
                 }
             }
-        }
+            if let Ok(content) = tokio::fs::read_to_string(&stderr_path).await {
+                if (stderr_pos as usize) < content.len() {
+                    for line in content[stderr_pos as usize..].lines() {
+                        let payload = format!("{}\n", line);
+                        self.emit_console_output(server_id, "stderr", &payload).await?;
+                    }
+                    stderr_pos = content.len() as u64;
+                    had_data = true;
+                }
+            }
 
-        let status = child.wait().await?;
-        if !status.success() {
-            warn!(
-                "Log stream exited for server {} (container {}) with status {:?}",
-                server_id,
-                container_id,
-                status.code()
-            );
+            if !running {
+                // Read any final data
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if let Ok(content) = tokio::fs::read_to_string(&stdout_path).await {
+                    if (stdout_pos as usize) < content.len() {
+                        for line in content[stdout_pos as usize..].lines() {
+                            self.emit_console_output(server_id, "stdout", &format!("{}\n", line)).await?;
+                        }
+                    }
+                }
+                if let Ok(content) = tokio::fs::read_to_string(&stderr_path).await {
+                    if (stderr_pos as usize) < content.len() {
+                        for line in content[stderr_pos as usize..].lines() {
+                            self.emit_console_output(server_id, "stderr", &format!("{}\n", line)).await?;
+                        }
+                    }
+                }
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_millis(if had_data { 50 } else { 200 })).await;
         }
 
         Ok(())
@@ -2281,7 +2287,7 @@ impl WebSocketHandler {
             "memoryTotalMb": memory_total_mb,
             "diskUsageMb": disk_usage_mb,
             "diskTotalMb": disk_total_mb,
-            "containerCount": containers.len(),
+            "containerCount": containers.iter().filter(|c| c.managed).count(),
             "uptimeSeconds": get_uptime(),
         });
 
@@ -2310,23 +2316,26 @@ impl WebSocketHandler {
             return Ok(());
         };
 
-        let container_count = containers.len();
+        let container_count = containers.iter().filter(|c| c.managed).count();
 
         // Build map of running containers by name/ID
         let mut running_containers = HashSet::new();
         let mut found_uuids = Vec::new();
         for container in &containers {
+            if !container.managed { continue; }
             let container_name = normalize_container_name(&container.names);
-            if !container_name.is_empty() {
-                found_uuids.push(container_name.clone());
-                if container.status.contains("Up") {
-                    running_containers.insert(container_name);
-                }
+            if container_name.is_empty() {
+                continue;
+            }
+            found_uuids.push(container_name.clone());
+            if container.status.contains("Up") {
+                running_containers.insert(container_name);
             }
         }
 
         // Report state for all known containers
         for container in containers {
+            if !container.managed { continue; }
             let server_uuid = normalize_container_name(&container.names);
             if server_uuid.is_empty() {
                 continue;
@@ -2394,7 +2403,7 @@ impl WebSocketHandler {
 
         loop {
             // Subscribe to all events
-            let mut event_stream = match self.runtime.subscribe_to_all_events().await {
+            let event_stream = match self.runtime.subscribe_to_all_events().await {
                 Ok(stream) => stream,
                 Err(e) => {
                     error!(
@@ -2406,90 +2415,63 @@ impl WebSocketHandler {
                 }
             };
 
-            let stdout = match event_stream.stdout.take() {
-                Some(out) => out,
-                None => {
-                    error!("Failed to capture event stream stdout. Retrying in 10s...");
-                    tokio::time::sleep(Duration::from_secs(10)).await;
-                    continue;
-                }
-            };
+            let mut receiver = event_stream.receiver;
 
-            let stderr = event_stream.stderr.take();
+            // Read events from containerd gRPC streaming
+            while let Ok(Some(envelope)) = receiver.message().await {
+                let topic = &envelope.topic;
 
-            // Spawn task to log stderr
-            if let Some(stderr) = stderr {
-                tokio::spawn(async move {
-                    let mut reader = tokio::io::BufReader::new(stderr).lines();
-                    while let Ok(Some(line)) = reader.next_line().await {
-                        if !line.trim().is_empty() {
-                            error!("nerdctl events stderr: {}", line);
-                        }
-                    }
-                });
-            }
-
-            let mut reader = tokio::io::BufReader::new(stdout).lines();
-
-            // Read events line by line (JSON format)
-            while let Ok(Some(line)) = reader.next_line().await {
-                let line = line.trim();
-                if line.is_empty() {
+                if topic.is_empty() {
                     continue;
                 }
 
-                // Parse JSON event
-                let event: Value = match serde_json::from_str(line) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("Failed to parse event JSON: {}", e);
-                        continue;
-                    }
+                // Extract container ID from the event envelope
+                // containerd events include the container ID in the event payload
+                let container_name = if let Some(ref event) = envelope.event {
+                    // Try to parse the container_id from the protobuf Any
+                    extract_container_id_from_event(event).unwrap_or_default()
+                } else {
+                    String::new()
                 };
 
-                // Extract container name and event type
-                let container_name = event
-                    .get("Actor")
-                    .and_then(|a| a.get("Attributes"))
-                    .and_then(|attrs| attrs.get("name"))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("");
-
-                let event_type = event.get("status").and_then(|s| s.as_str()).unwrap_or("");
-
-                if container_name.is_empty() || event_type.is_empty() {
+                if container_name.is_empty() {
                     continue;
                 }
 
-                // Only sync on state-changing events
-                match event_type {
-                    "start" | "die" | "stop" | "kill" | "pause" | "unpause" => {
-                        debug!("Container {} event: {}", container_name, event_type);
+                // Skip non-Catalyst containers (Catalyst uses CUID IDs starting with 'c' or 'catalyst-installer-')
+                if !container_name.starts_with("cm") && !container_name.starts_with("catalyst-") {
+                    continue;
+                }
+
+                // Map containerd event topics to state-changing events
+                match topic.as_str() {
+                    "/tasks/start" | "/tasks/exit" | "/tasks/paused" => {
+                        debug!("Container {} event: {}", container_name, topic);
 
                         // Give the container a moment to stabilize state
                         tokio::time::sleep(Duration::from_millis(100)).await;
 
                         // Sync this specific container's state
-                        if let Err(e) = self.sync_container_state(container_name).await {
+                        if let Err(e) = self.sync_container_state(&container_name).await {
                             warn!("Failed to sync state for {}: {}", container_name, e);
                         }
                     }
-                    "remove" | "destroy" => {
+                    "/containers/delete" => {
                         // Container has been removed - report as stopped immediately
-                        debug!("Container {} removed/destroyed", container_name);
-                        if let Err(e) = self.sync_removed_container_state(container_name).await {
+                        debug!("Container {} removed", container_name);
+                        if let Err(e) = self.sync_removed_container_state(&container_name).await {
                             warn!("Failed to sync removed state for {}: {}", container_name, e);
                         }
                     }
                     _ => {
-                        // Ignore other events like "create", "exec_create", etc.
+                        // Ignore other events
                     }
                 }
             }
 
             // Stream ended, restart
             warn!("Global event stream ended, restarting in 5s...");
-            let _ = event_stream.wait().await;
+            drop(receiver);
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
@@ -2577,7 +2559,7 @@ impl WebSocketHandler {
         // writer_opt may be None if we're not connected; we will buffer metrics to disk in that case;
 
         for container in containers {
-            if !container.status.contains("Up") {
+            if !container.status.contains("Up") || !container.managed {
                 continue;
             }
 
@@ -2684,6 +2666,39 @@ fn normalize_container_name(name: &str) -> String {
         .trim()
         .trim_start_matches('/')
         .to_string()
+}
+
+/// Extract container_id from a containerd event's protobuf Any payload
+fn extract_container_id_from_event(event: &prost_types::Any) -> Option<String> {
+    // containerd task events encode container_id as a field in the protobuf message
+    // The value bytes contain the serialized protobuf; container_id is typically field 1 (tag 0x0a)
+    let data = &event.value;
+    let mut i = 0;
+    while i < data.len() {
+        let tag_byte = data[i];
+        let field_number = tag_byte >> 3;
+        let wire_type = tag_byte & 0x07;
+        i += 1;
+        if wire_type == 2 {
+            // Length-delimited field
+            if i >= data.len() { break; }
+            let len = data[i] as usize;
+            i += 1;
+            if field_number == 1 && i + len <= data.len() {
+                if let Ok(s) = std::str::from_utf8(&data[i..i + len]) {
+                    return Some(s.to_string());
+                }
+            }
+            i += len;
+        } else if wire_type == 0 {
+            // Varint
+            while i < data.len() && data[i] & 0x80 != 0 { i += 1; }
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    None
 }
 
 fn parse_percent(value: &str) -> Option<f64> {

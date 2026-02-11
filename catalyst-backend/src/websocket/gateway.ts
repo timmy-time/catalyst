@@ -1076,8 +1076,11 @@ export class WebSocketGateway {
             message.state as ServerState
           );
           if (!transition.allowed) {
-            this.logger.warn({ serverId: server.id, from: server.status, to: message.state }, "Invalid state transition");
-            return;
+            // State sync from agent represents actual container state - force update for reconciliation
+            this.logger.info(
+              { serverId: server.id, from: server.status, to: message.state },
+              "State sync forced reconciliation (overriding state machine)"
+            );
           }
           this.logger.info(
             { serverId: server.id, oldStatus: server.status, newStatus: message.state },

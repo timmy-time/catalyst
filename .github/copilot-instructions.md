@@ -40,7 +40,7 @@ Catalyst is a full-stack game server management system built as a three-tier mon
 
 3. **Agent** (`catalyst-agent/`) - Rust + Tokio + Containerd
    - Daemon connecting to backend via WebSocket
-   - Container lifecycle management (creatable via nerdctl, not Docker)
+   - Container lifecycle management (via containerd gRPC, not Docker)
    - Health reporting, metrics collection, file operations
    - System metrics collection every 30 seconds
 
@@ -395,7 +395,7 @@ File: [catalyst-agent/src/runtime_manager.rs](../catalyst-agent/src/runtime_mana
 Agent connects to Containerd via Unix socket (not Docker):
 - Configuration: `socket_path: /run/containerd/containerd.sock` in `config.toml`
 - Namespace isolation: defaults to `"catalyst"` namespace
-- Container creation expects pre-cached images or manual pull via `nerdctl`
+- Container creation expects pre-cached images or pull via `ctr`
 - No automatic image pulls; template specifies `image` + `installImage`
 
 **When adding agent operations:**

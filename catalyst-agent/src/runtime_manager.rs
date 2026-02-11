@@ -8,7 +8,29 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use tokio::io::AsyncBufReadExt;
+use containerd_client::services::v1::containers_client::ContainersClient;
+use containerd_client::services::v1::content_client::ContentClient;
+use containerd_client::services::v1::images_client::ImagesClient;
+use containerd_client::services::v1::snapshots::snapshots_client::SnapshotsClient;
+use containerd_client::services::v1::tasks_client::TasksClient;
+use containerd_client::services::v1::events_client::EventsClient;
+use containerd_client::services::v1::{
+    Container, CreateContainerRequest, DeleteContainerRequest, GetContainerRequest,
+    ListContainersRequest, ReadContentRequest,
+};
+use containerd_client::services::v1::{
+    CreateTaskRequest, DeleteTaskRequest, ExecProcessRequest,
+    KillRequest as TaskKillRequest, StartRequest, WaitRequest,
+};
+use containerd_client::services::v1::container::Runtime;
+use containerd_client::services::v1::GetImageRequest;
+use containerd_client::services::v1::snapshots::{
+    PrepareSnapshotRequest, RemoveSnapshotRequest, MountsRequest,
+};
+use containerd_client::services::v1::SubscribeRequest;
+use containerd_client::with_namespace;
+use prost_types::Any;
+use tonic::Request;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
@@ -19,9 +41,13 @@ use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::stat::Mode;
 use nix::unistd::mkfifo;
 
-// Assuming these modules exist in your project structure
 use crate::errors::{AgentError, AgentResult};
 use crate::firewall_manager::FirewallManager;
+
+const RUNTIME_NAME: &str = "io.containerd.runc.v2";
+const SPEC_TYPE_URL: &str = "types.containerd.io/opencontainers/runtime-spec/1/Spec";
+const CONSOLE_BASE_DIR: &str = "/tmp/catalyst-console";
+const CNI_BIN_DIR: &str = "/opt/cni/bin";
 
 /// Parameters for creating a container
 pub struct ContainerConfig<'a> {
@@ -38,1214 +64,1197 @@ pub struct ContainerConfig<'a> {
     pub network_ip: Option<&'a str>,
 }
 
+struct ContainerIo {
+    _stdin_fifo: PathBuf,
+    _stdout_file: PathBuf,
+    _stderr_file: PathBuf,
+    stdin_writer: Option<File>,
+}
+
+#[derive(Debug)]
+pub struct ContainerInfo {
+    pub id: String,
+    pub names: String,
+    pub managed: bool,
+    pub status: String,
+    pub command: String,
+    pub image: String,
+}
+
+#[derive(Debug)]
+pub struct ContainerStats {
+    pub container_id: String,
+    pub container_name: String,
+    pub cpu_percent: String,
+    pub memory_usage: String,
+    pub net_io: String,
+    pub block_io: String,
+}
+
+/// Log stream providing async file handles for stdout/stderr
+pub struct LogStream {
+    pub stdout: Option<tokio::fs::File>,
+    pub stderr: Option<tokio::fs::File>,
+    container_id: String,
+}
+
+impl LogStream {
+    pub fn container_id(&self) -> &str {
+        &self.container_id
+    }
+}
+
+/// Streaming event receiver from containerd events API
+pub struct EventStream {
+    pub receiver: tonic::Streaming<containerd_client::types::Envelope>,
+}
+
+/// Installer container handle for interactive install scripts
+pub struct InstallerHandle {
+    container_id: String,
+    namespace: String,
+    channel: tonic::transport::Channel,
+    pub stdout_path: PathBuf,
+    pub stderr_path: PathBuf,
+}
+
+impl InstallerHandle {
+    pub async fn wait(&self) -> AgentResult<i32> {
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = WaitRequest {
+            container_id: self.container_id.clone(),
+            ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = tasks.wait(req).await.map_err(grpc_err)?;
+        Ok(resp.into_inner().exit_status as i32)
+    }
+
+    pub async fn cleanup(&self) -> AgentResult<()> {
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = DeleteTaskRequest { container_id: self.container_id.clone() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.delete(req).await;
+
+        let mut containers = ContainersClient::new(self.channel.clone());
+        let req = DeleteContainerRequest { id: self.container_id.clone() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = containers.delete(req).await;
+
+        let mut snaps = SnapshotsClient::new(self.channel.clone());
+        let req = RemoveSnapshotRequest {
+            snapshotter: "overlayfs".to_string(),
+            key: format!("{}-snap", self.container_id),
+        };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = snaps.remove(req).await;
+
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(&self.container_id);
+        let _ = fs::remove_dir_all(&io_dir);
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct ContainerdRuntime {
-    socket_path: String,
+    _socket_path: String,
     namespace: String,
-    console_writers: Arc<Mutex<HashMap<String, ConsoleWriter>>>,
-}
-
-struct ConsoleWriter {
-    file: File,
-}
-
-struct ConsoleFifo {
-    dir: String,
-    path: String,
+    channel: tonic::transport::Channel,
+    container_io: Arc<Mutex<HashMap<String, ContainerIo>>>,
 }
 
 impl ContainerdRuntime {
-    pub fn new(socket_path: std::path::PathBuf, namespace: String) -> Self {
-        Self {
-            socket_path: socket_path.to_string_lossy().to_string(),
+    /// Connect to containerd socket and create runtime
+    pub async fn new(socket_path: PathBuf, namespace: String) -> AgentResult<Self> {
+        let channel = containerd_client::connect(&socket_path)
+            .await
+            .map_err(|e| AgentError::ContainerError(format!(
+                "Failed to connect to containerd at {}: {}", socket_path.display(), e
+            )))?;
+        info!("Connected to containerd at {}", socket_path.display());
+        Ok(Self {
+            _socket_path: socket_path.to_string_lossy().to_string(),
             namespace,
-            console_writers: Arc::new(Mutex::new(HashMap::new())),
-        }
+            channel,
+            container_io: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
-    /// Create and start a container
+    /// Create and start a container via containerd gRPC
     pub async fn create_container(&self, config: ContainerConfig<'_>) -> AgentResult<String> {
-        info!(
-            "Creating container: {} from image: {}",
-            config.container_id, config.image
-        );
+        let qualified_image = Self::qualify_image_ref(config.image);
+        info!("Creating container: {} from image: {}", config.container_id, qualified_image);
 
-        // 1. Prepare FIFO for stdin
-        let console_fifo = self.prepare_console_fifo(config.container_id).await?;
+        self.ensure_image(config.image).await?;
 
-        // 2. Attach Console Writer
-        // CRITICAL FIX: We must attach the writer *before* the container starts to ensure
-        // the FIFO exists and handles are ready, but we must use a non-blocking open strategy
-        // (O_RDWR) to avoid deadlocking waiting for the container to read.
-        self.attach_console_writer(config.container_id, console_fifo.path.clone())
-            .await?;
+        // Read image's default environment variables (PATH, JAVA_HOME, etc.)
+        let image_env = self.get_image_env(&qualified_image).await;
 
-        // Build nerdctl command
-        let mut cmd = Command::new("nerdctl");
-        cmd.arg("--namespace").arg(&self.namespace).arg("run");
+        // Prepare I/O paths
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(config.container_id);
+        fs::create_dir_all(&io_dir).map_err(|e|
+            AgentError::ContainerError(format!("Failed to create I/O directory: {}", e)))?;
+        set_dir_perms(&io_dir, 0o755);
 
-        // Set resource limits
-        cmd.arg(format!("--memory={}m", config.memory_mb));
-        cmd.arg("--cpus").arg(config.cpu_cores.to_string());
+        let stdin_path = io_dir.join("stdin");
+        let stdout_path = io_dir.join("stdout");
+        let stderr_path = io_dir.join("stderr");
+        if stdin_path.exists() { fs::remove_file(&stdin_path).ok(); }
+        create_fifo(&stdin_path).map_err(|e|
+            AgentError::ContainerError(format!("Failed to create stdin FIFO: {}", e)))?;
+        File::create(&stdout_path).map_err(|e|
+            AgentError::ContainerError(format!("stdout: {}", e)))?;
+        File::create(&stderr_path).map_err(|e|
+            AgentError::ContainerError(format!("stderr: {}", e)))?;
 
-        // Security hardening: prevent privilege escalation and drop unnecessary capabilities
-        cmd.arg("--security-opt").arg("no-new-privileges");
-        cmd.arg("--cap-drop").arg("ALL");
-        cmd.arg("--cap-add").arg("CHOWN");
-        cmd.arg("--cap-add").arg("SETUID");
-        cmd.arg("--cap-add").arg("SETGID");
-        cmd.arg("--cap-add").arg("NET_BIND_SERVICE");
-
-        // Volume mount (host data directory → /data in container)
-        cmd.arg("-v").arg(format!("{}:/data", config.data_dir));
-
-        // Provide stable host identifiers for apps that derive encryption keys from hardware UUID.
-        add_readonly_mount(&mut cmd, "/etc/machine-id", "/etc/machine-id");
-        add_readonly_mount(
-            &mut cmd,
-            "/var/lib/dbus/machine-id",
-            "/var/lib/dbus/machine-id",
-        );
-        add_readonly_mount(
-            &mut cmd,
-            "/sys/class/dmi/id/product_uuid",
-            "/sys/class/dmi/id/product_uuid",
-        );
-
-        // Working directory
-        cmd.arg("-w").arg("/data");
-
-        // Network mode
-        if let Some(network) = config.network_mode {
-            if network == "host" {
-                cmd.arg("--network").arg("host");
-            } else if network != "bridge" {
-                // Assume it's a custom network name (e.g., "mc-lan" for macvlan)
-                cmd.arg("--network").arg(network);
-                if let Some(ip) = config.network_ip {
-                    cmd.arg("--ip").arg(ip);
-                }
-            }
-            // "bridge" or no network specified = default bridge
+        let stdin_writer = open_fifo_rdwr(&stdin_path)?;
+        {
+            let mut io_map = self.container_io.lock().await;
+            io_map.insert(config.container_id.to_string(), ContainerIo {
+                _stdin_fifo: stdin_path.clone(), _stdout_file: stdout_path.clone(),
+                _stderr_file: stderr_path.clone(), stdin_writer: Some(stdin_writer),
+            });
         }
 
-        // Port mapping (only if not using host network)
-        if config.network_mode != Some("host") {
-            if config.port_bindings.is_empty() {
-                // Backend contract: empty portBindings should still bind the primary port.
-                // Use an ephemeral host port while exposing the primary container port.
-                cmd.arg("-p").arg(format!("0.0.0.0::{}", config.port));
-            } else {
-                for (container_port, host_port) in config.port_bindings {
-                    cmd.arg("-p")
-                        .arg(format!("0.0.0.0:{}:{}", host_port, container_port));
-                }
-            }
-        }
-
-        // Set environment variables
-        for (key, value) in config.env {
-            cmd.arg("-e").arg(format!("{}={}", key, value));
-        }
-
-        // Container name and image
-        cmd.arg("--name").arg(config.container_id);
-        cmd.arg("-d"); // Detached
-
-        // FIX: Removed "-i" because nerdctl does not support -i and -d together.
-        // Since we are piping stdin via a mounted FIFO file inside the shell command below,
-        // we do not need the container runtime to allocate an interactive stdin stream.
-
-        cmd.arg("-v")
-            .arg(format!("{}:{}", console_fifo.dir, console_fifo.dir));
-
-        cmd.arg("--label")
-            .arg(format!("catalyst.agent.socket_path={}", self.socket_path));
-
-        let entrypoint_arg = if !config.startup_command.is_empty() {
-            let exec_path = format!("{}/catalyst-entrypoint", console_fifo.dir);
-            let entrypoint = format!(
-                "#!/bin/bash\nset -e\nFIFO=\"{}\"\nexec 3<> \"$FIFO\"\nexec < \"$FIFO\"\nexec {}\n",
-                console_fifo.path, config.startup_command
-            );
-            self.create_entrypoint_script(&console_fifo.dir, &entrypoint)
-                .await?;
-            Some(exec_path)
-        } else {
-            None
+        // Build OCI spec
+        let use_host_network = config.network_mode == Some("host");
+        let spec = self.build_oci_spec(&config, &io_dir, use_host_network, &image_env)?;
+        let spec_any = Any {
+            type_url: SPEC_TYPE_URL.to_string(),
+            value: spec.to_string().into_bytes(),
         };
 
-        if let Some(exec_path) = entrypoint_arg {
-            cmd.arg("--entrypoint").arg(exec_path);
-        }
-        cmd.arg(config.image);
+        // Prepare rootfs snapshot
+        let snap_key = format!("{}-snap", config.container_id);
+        self.prepare_snapshot(&qualified_image, &snap_key).await?;
 
-        let output = cmd.output().await.map_err(|e| {
-            AgentError::ContainerError(format!("Failed to create container: {}", e))
+        // Create container
+        let container = Container {
+            id: config.container_id.to_string(),
+            image: qualified_image,
+            labels: HashMap::from([("catalyst.managed".to_string(), "true".to_string())]),
+            runtime: Some(Runtime { name: RUNTIME_NAME.to_string(), options: None }),
+            spec: Some(spec_any),
+            snapshot_key: snap_key.clone(),
+            snapshotter: "overlayfs".to_string(),
+            ..Default::default()
+        };
+        let mut client = ContainersClient::new(self.channel.clone());
+        let req = CreateContainerRequest { container: Some(container) };
+        let req = with_namespace!(req, &self.namespace);
+        client.create(req).await.map_err(grpc_err)?;
+
+        // Get rootfs mounts and create task
+        let mounts = self.get_snapshot_mounts(&snap_key).await?;
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = CreateTaskRequest {
+            container_id: config.container_id.to_string(),
+            stdin: stdin_path.to_string_lossy().to_string(),
+            stdout: stdout_path.to_string_lossy().to_string(),
+            stderr: stderr_path.to_string_lossy().to_string(),
+            rootfs: mounts,
+            ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = tasks.create(req).await.map_err(|e| {
+            self.cleanup_io(config.container_id);
+            grpc_err(e)
+        })?;
+        let pid = resp.into_inner().pid;
+
+        // Set up CNI networking before starting
+        if !use_host_network {
+            if let Err(e) = self.setup_cni_network(
+                config.container_id, pid, config.network_mode, config.network_ip,
+                config.port, config.port_bindings,
+            ).await {
+                warn!("CNI network setup failed: {}", e);
+            }
+        }
+
+        // Start task
+        let req = StartRequest { container_id: config.container_id.to_string(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.start(req).await.map_err(|e| {
+            self.cleanup_io(config.container_id);
+            grpc_err(e)
         })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if let (Some(network), Some(ip)) = (config.network_mode, config.network_ip) {
-                if network != "bridge" && network != "host" {
-                    if let Err(err) = Self::release_static_ip(network, ip) {
-                        warn!(
-                            "Failed to release static IP {} for {}: {}",
-                            ip, network, err
-                        );
+        info!("Container created and started: {} (pid {})", config.container_id, pid);
+
+        // Configure firewall
+        if let Ok(ip) = self.get_container_ip(config.container_id).await {
+            if !ip.is_empty() {
+                let ports: Vec<u16> = if config.port_bindings.is_empty() {
+                    vec![config.port]
+                } else {
+                    config.port_bindings.values().copied().collect()
+                };
+                for p in ports {
+                    if let Err(e) = FirewallManager::allow_port(p, &ip).await {
+                        error!("Firewall config failed for port {}: {}", p, e);
                     }
                 }
             }
-            self.cleanup_console_fifo(config.container_id).await;
-            return Err(AgentError::ContainerError(format!(
-                "Container creation failed: {}",
-                stderr
-            )));
         }
 
-        let container_full_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        info!("Container created successfully: {}", container_full_id);
-
-        // Get container IP for firewall configuration
-        let container_ip_opt = match self.get_container_ip(config.container_id).await {
-            Ok(ip) if !ip.is_empty() => Some(ip),
-            Ok(_) => None,
-            Err(err) => {
-                warn!(
-                    "Could not determine container IP for {}: {}. Skipping firewall configuration.",
-                    config.container_id, err
-                );
-                None
-            }
-        };
-
-        // Configure firewall to allow the ports, if we have a concrete container IP
-        if let Some(container_ip) = container_ip_opt {
-            let ports_to_open: Vec<u16> = if config.port_bindings.is_empty() {
-                self.resolve_host_ports(config.container_id, config.port)
-                    .await
-                    .unwrap_or_default()
-            } else {
-                config.port_bindings.values().copied().collect()
-            };
-            for host_port in ports_to_open {
-                info!(
-                    "Configuring firewall for port {} (container IP: {})",
-                    host_port, container_ip
-                );
-                if let Err(e) = FirewallManager::allow_port(host_port, &container_ip).await {
-                    error!("Failed to configure firewall: {}", e);
-                    // Don't fail container creation if firewall config fails
-                } else {
-                    info!("✓ Firewall configured for port {}", host_port);
-                }
-            }
-        }
-
-        Ok(container_full_id)
+        Ok(config.container_id.to_string())
     }
 
+    /// Spawn an ephemeral installer container via containerd gRPC
     pub async fn spawn_installer_container(
-        &self,
-        image: &str,
-        script: &str,
-        env: &HashMap<String, String>,
-        data_dir: &str,
-    ) -> AgentResult<tokio::process::Child> {
-        info!("Spawning installer container with image: {}", image);
+        &self, image: &str, script: &str, env: &HashMap<String, String>, data_dir: &str,
+    ) -> AgentResult<InstallerHandle> {
+        let container_id = format!("catalyst-installer-{}", uuid::Uuid::new_v4());
+        let qualified_image = Self::qualify_image_ref(image);
+        info!("Spawning installer {} with image: {}", container_id, qualified_image);
+        self.ensure_image(image).await?;
 
-        let mut cmd = Command::new("nerdctl");
-        cmd.arg("--namespace")
-            .arg(&self.namespace)
-            .arg("run")
-            .arg("--rm")
-            .arg("-i");
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(&container_id);
+        fs::create_dir_all(&io_dir).map_err(|e|
+            AgentError::ContainerError(format!("mkdir: {}", e)))?;
+        let stdin_path = io_dir.join("stdin");
+        let stdout_path = io_dir.join("stdout");
+        let stderr_path = io_dir.join("stderr");
+        if stdin_path.exists() { fs::remove_file(&stdin_path).ok(); }
+        create_fifo(&stdin_path).map_err(|e|
+            AgentError::ContainerError(format!("fifo: {}", e)))?;
+        File::create(&stdout_path).map_err(|e|
+            AgentError::ContainerError(format!("stdout: {}", e)))?;
+        File::create(&stderr_path).map_err(|e|
+            AgentError::ContainerError(format!("stderr: {}", e)))?;
 
-        cmd.arg("-v").arg(format!("{}:/data", data_dir));
-        cmd.arg("-w").arg("/data");
+        let mut env_list = vec![
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+            "TERM=xterm".to_string(),
+        ];
+        for (k, v) in env { env_list.push(format!("{}={}", k, v)); }
 
-        for (key, value) in env {
-            cmd.arg("-e").arg(format!("{}={}", key, value));
-        }
-
-        cmd.arg(image).arg("sh").arg("-c").arg(script);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let child = cmd.spawn().map_err(|e| {
-            AgentError::ContainerError(format!("Failed to run installer container: {}", e))
-        })?;
-
-        Ok(child)
-    }
-
-    async fn prepare_console_fifo(&self, container_id: &str) -> AgentResult<ConsoleFifo> {
-        let base_dir = PathBuf::from("/tmp/catalyst-console");
-        let dir = base_dir.join(container_id);
-        let fifo_path = dir.join("stdin");
-
-        fs::create_dir_all(&dir).map_err(|e| {
-            AgentError::ContainerError(format!("Failed to create console directory: {}", e))
-        })?;
-
-        let mut perms = fs::metadata(&dir)
-            .map_err(|e| AgentError::ContainerError(format!("Failed to stat console dir: {}", e)))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&dir, perms).map_err(|e| {
-            AgentError::ContainerError(format!(
-                "Failed to set console directory permissions: {}",
-                e
-            ))
-        })?;
-
-        if fifo_path.exists() {
-            fs::remove_file(&fifo_path).ok();
-        }
-
-        create_fifo(&fifo_path).map_err(|e| {
-            AgentError::ContainerError(format!("Failed to create console FIFO: {}", e))
-        })?;
-        let mut fifo_perms = fs::metadata(&fifo_path)
-            .map_err(|e| AgentError::ContainerError(format!("Failed to stat console FIFO: {}", e)))?
-            .permissions();
-        fifo_perms.set_mode(0o660);
-        fs::set_permissions(&fifo_path, fifo_perms).map_err(|e| {
-            AgentError::ContainerError(format!("Failed to set console FIFO permissions: {}", e))
-        })?;
-
-        Ok(ConsoleFifo {
-            dir: dir.to_string_lossy().into_owned(),
-            path: fifo_path.to_string_lossy().into_owned(),
-        })
-    }
-
-    async fn attach_console_writer(
-        &self,
-        container_id: &str,
-        fifo_path: String,
-    ) -> AgentResult<()> {
-        let path_clone = fifo_path.clone();
-
-        // Spawn a blocking task to open the FIFO.
-        // CRITICAL FIX: We open with read(true) AND write(true).
-        // Opening a FIFO with O_RDWR (read+write) on Linux succeeds immediately without blocking,
-        // because the kernel sees that "a reader" (us) is present.
-        // If we opened with only write(true) (O_WRONLY), open() would block until the container reads from it.
-        // Since the container isn't running yet, we would deadlock.
-        let file = spawn_blocking(move || {
-            let file = std::fs::OpenOptions::new()
-                .read(true) // Helper to ensure O_RDWR flag is set to avoid blocking
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-                .open(&path_clone)
-                .map_err(|e| {
-                    AgentError::ContainerError(format!("Failed to open console FIFO: {}", e))
-                })?;
-
-            // We remove O_NONBLOCK now that we have the handle.
-            // We keep the handle open as O_RDWR.
-            // SAFETY: fd is valid and owned by this thread; we only adjust flags.
-            if let Ok(flags) = fcntl(&file, FcntlArg::F_GETFL) {
-                let mut oflags = OFlag::from_bits_truncate(flags);
-                oflags.remove(OFlag::O_NONBLOCK);
-                let _ = fcntl(&file, FcntlArg::F_SETFL(oflags));
+        let spec = serde_json::json!({
+            "ociVersion": "1.1.0",
+            "process": {
+                "terminal": false, "user": {"uid":0,"gid":0},
+                "args": ["sh", "-c", script], "env": env_list,
+                "cwd": "/data", "noNewPrivileges": true
+            },
+            "root": {"path":"rootfs","readonly":false},
+            "hostname": &container_id,
+            "mounts": base_mounts(data_dir),
+            "linux": {
+                "namespaces": [{"type":"pid"},{"type":"ipc"},{"type":"uts"},{"type":"mount"}],
+                "maskedPaths": masked_paths(), "readonlyPaths": readonly_paths()
             }
-            Ok::<File, AgentError>(file)
+        });
+        let spec_any = Any { type_url: SPEC_TYPE_URL.to_string(), value: spec.to_string().into_bytes() };
+
+        let snap_key = format!("{}-snap", container_id);
+        self.prepare_snapshot(&qualified_image, &snap_key).await?;
+
+        let container = Container {
+            id: container_id.clone(), image: qualified_image,
+            runtime: Some(Runtime { name: RUNTIME_NAME.to_string(), options: None }),
+            spec: Some(spec_any), snapshot_key: snap_key.clone(),
+            snapshotter: "overlayfs".to_string(), ..Default::default()
+        };
+        let mut client = ContainersClient::new(self.channel.clone());
+        let req = CreateContainerRequest { container: Some(container) };
+        let req = with_namespace!(req, &self.namespace);
+        client.create(req).await.map_err(grpc_err)?;
+
+        let mounts = self.get_snapshot_mounts(&snap_key).await?;
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = CreateTaskRequest {
+            container_id: container_id.clone(),
+            stdin: stdin_path.to_string_lossy().to_string(),
+            stdout: stdout_path.to_string_lossy().to_string(),
+            stderr: stderr_path.to_string_lossy().to_string(),
+            rootfs: mounts, ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.create(req).await.map_err(grpc_err)?;
+
+        let req = StartRequest { container_id: container_id.clone(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.start(req).await.map_err(grpc_err)?;
+
+        Ok(InstallerHandle {
+            container_id, namespace: self.namespace.clone(), channel: self.channel.clone(),
+            stdout_path, stderr_path,
         })
-        .await
-        .map_err(|e| AgentError::ContainerError(format!("Console writer task failed: {}", e)))??;
-
-        let mut writers = self.console_writers.lock().await;
-        writers.insert(container_id.to_string(), ConsoleWriter { file });
-
-        Ok(())
     }
 
-    async fn cleanup_console_fifo(&self, container_id: &str) {
-        {
-            let mut writers = self.console_writers.lock().await;
-            writers.remove(container_id);
-            // File handle is closed when removed from map
-        }
-        let dir = PathBuf::from("/tmp/catalyst-console").join(container_id);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// Start a container
     pub async fn start_container(&self, container_id: &str) -> AgentResult<()> {
         info!("Starting container: {}", container_id);
 
-        // Ensure console writer is ready if this is a restart
-        let _ = self.ensure_console_writer(container_id).await;
-
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("start")
-            .arg(container_id)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to start container: {}",
-                stderr
-            )));
+        // Check if a task already exists for this container
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let get_req = containerd_client::services::v1::GetRequest {
+            container_id: container_id.to_string(), ..Default::default()
+        };
+        let get_req = with_namespace!(get_req, &self.namespace);
+        match tasks.get(get_req).await {
+            Ok(resp) => {
+                if let Some(process) = resp.into_inner().process {
+                    if process.status == 2 {
+                        // Task is already running
+                        info!("Container {} already has a running task, nothing to do", container_id);
+                        let _ = self.ensure_container_io(container_id).await;
+                        return Ok(());
+                    }
+                    // Task exists but is not running (stopped/created) - delete it first
+                    info!("Container {} has a stale task (status={}), deleting before restart", container_id, process.status);
+                    let del_req = DeleteTaskRequest { container_id: container_id.to_string() };
+                    let del_req = with_namespace!(del_req, &self.namespace);
+                    let _ = tasks.delete(del_req).await;
+                }
+            }
+            Err(e) if e.code() == tonic::Code::NotFound => {
+                // No task exists, proceed normally
+            }
+            Err(e) => {
+                warn!("Failed to check task status for {}: {}", container_id, e);
+            }
         }
 
+        let _ = self.ensure_container_io(container_id).await;
+        let snap_key = format!("{}-snap", container_id);
+        let mounts = self.get_snapshot_mounts(&snap_key).await.unwrap_or_default();
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+
+        let req = CreateTaskRequest {
+            container_id: container_id.to_string(),
+            stdin: io_dir.join("stdin").to_string_lossy().to_string(),
+            stdout: io_dir.join("stdout").to_string_lossy().to_string(),
+            stderr: io_dir.join("stderr").to_string_lossy().to_string(),
+            rootfs: mounts, ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.create(req).await.map_err(grpc_err)?;
+
+        let req = StartRequest { container_id: container_id.to_string(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.start(req).await.map_err(grpc_err)?;
         Ok(())
     }
 
-    /// Stop a container gracefully
     pub async fn stop_container(&self, container_id: &str, timeout_secs: u64) -> AgentResult<()> {
         info!("Stopping container: {}", container_id);
-
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("stop")
-            .arg("-t")
-            .arg(timeout_secs.to_string())
-            .arg(container_id)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to stop container: {}",
-                stderr
-            )));
+        let mut tasks = TasksClient::new(self.channel.clone());
+        // SIGTERM
+        let req = TaskKillRequest {
+            container_id: container_id.to_string(), signal: 15, all: true, ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        if let Err(e) = tasks.kill(req).await {
+            if is_not_found(&e) { return Ok(()); }
+            return Err(grpc_err(e));
         }
-
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), self.wait_for_exit(container_id)).await {
+            Ok(Ok(_)) | Ok(Err(_)) => {}
+            Err(_) => {
+                warn!("Container {} did not stop in {}s, sending SIGKILL", container_id, timeout_secs);
+                let req = TaskKillRequest {
+                    container_id: container_id.to_string(), signal: 9, all: true, ..Default::default()
+                };
+                let req = with_namespace!(req, &self.namespace);
+                let _ = tasks.kill(req).await;
+                let _ = self.wait_for_exit(container_id).await;
+            }
+        }
+        let req = DeleteTaskRequest { container_id: container_id.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.delete(req).await;
         Ok(())
     }
 
-    /// Kill a container immediately
     pub async fn kill_container(&self, container_id: &str, signal: &str) -> AgentResult<()> {
         info!("Killing container: {} with signal {}", container_id, signal);
-
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("kill")
-            .arg("-s")
-            .arg(signal)
-            .arg(container_id)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to kill container: {}",
-                stderr
-            )));
+        let sig = match signal { "SIGKILL"|"9" => 9u32, "SIGTERM"|"15" => 15, "SIGINT"|"2" => 2, _ => 9 };
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = TaskKillRequest {
+            container_id: container_id.to_string(), signal: sig, all: true, ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        if let Err(e) = tasks.kill(req).await {
+            if is_not_found(&e) { return Ok(()); }
+            return Err(grpc_err(e));
         }
-
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.wait_for_exit(container_id)).await;
+        let req = DeleteTaskRequest { container_id: container_id.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.delete(req).await;
         Ok(())
     }
 
-    /// Remove a container
     pub async fn remove_container(&self, container_id: &str) -> AgentResult<()> {
         info!("Removing container: {}", container_id);
-
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("rm")
-            .arg("-f")
-            .arg(container_id)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to remove container: {}",
-                stderr
-            )));
-        }
-
-        self.cleanup_console_fifo(container_id).await;
-
-        Ok(())
-    }
-
-    /// Get container logs
-    pub async fn get_logs(&self, container_id: &str, lines: Option<u32>) -> AgentResult<String> {
-        let mut cmd = Command::new("nerdctl");
-        cmd.arg("--namespace").arg(&self.namespace).arg("logs");
-
-        if let Some(n) = lines {
-            cmd.arg("--tail").arg(n.to_string());
-        }
-
-        cmd.arg(container_id);
-
-        let output = cmd.output().await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to get logs: {}",
-                stderr
-            )));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Stream container logs in real-time
-    pub async fn stream_logs<F>(&self, container_id: &str, mut callback: F) -> AgentResult<()>
-    where
-        F: FnMut(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
-    {
-        info!("Streaming logs for container: {}", container_id);
-
-        let mut child = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("logs")
-            .arg("-f")
-            .arg(container_id)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stdout".to_string()))?;
-
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| AgentError::InternalError("Failed to capture stderr".to_string()))?;
-
-        let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-        let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
-
-        loop {
-            tokio::select! {
-                line = stdout_reader.next_line() => {
-                    match line? {
-                        Some(l) => callback(l).await,
-                        None => break,
-                    }
-                }
-                line = stderr_reader.next_line() => {
-                    match line? {
-                        Some(l) => callback(l).await,
-                        None => break,
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// List all containers
-    pub async fn list_containers(&self) -> AgentResult<Vec<ContainerInfo>> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("ps")
-            .arg("-a")
-            .arg("--format")
-            .arg("json")
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(AgentError::ContainerError(
-                "Failed to list containers".to_string(),
-            ));
-        }
-
-        let json_output = String::from_utf8_lossy(&output.stdout);
-
-        // nerdctl returns newline-delimited JSON, parse each line
-        let mut containers = Vec::new();
-        for line in json_output.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if let Ok(container) = serde_json::from_str::<ContainerInfo>(line) {
-                containers.push(container);
-            }
-        }
-
-        Ok(containers)
-    }
-
-    pub async fn clean_stale_ip_allocations(&self, network: &str) -> AgentResult<usize> {
-        let allocations_dir = format!("/var/lib/cni/networks/{}", network);
-        let entries = match fs::read_dir(&allocations_dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(err) => return Err(AgentError::IoError(err.to_string())),
+        let _ = self.teardown_cni_network(container_id).await;
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = TaskKillRequest {
+            container_id: container_id.to_string(), signal: 9, all: true, ..Default::default()
         };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.kill(req).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), self.wait_for_exit(container_id)).await;
+        let req = DeleteTaskRequest { container_id: container_id.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.delete(req).await;
 
-        let containers = self.list_containers().await?;
-        let mut active_ips = HashSet::new();
-        let mut running_containers = 0;
-        for container in containers {
-            if !container.status.contains("Up") {
-                continue;
-            }
-            running_containers += 1;
-            if let Ok(ip) = self.get_container_ip(&container.id).await {
-                if !ip.is_empty() {
-                    active_ips.insert(ip);
-                }
-            }
-        }
+        let mut client = ContainersClient::new(self.channel.clone());
+        let req = DeleteContainerRequest { id: container_id.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = client.delete(req).await;
 
-        if running_containers > 0 && active_ips.is_empty() {
-            // Avoid deleting allocations if we couldn't resolve any active IPs.
-            return Ok(0);
-        }
+        let snap_key = format!("{}-snap", container_id);
+        let mut snaps = SnapshotsClient::new(self.channel.clone());
+        let req = RemoveSnapshotRequest { snapshotter: "overlayfs".to_string(), key: snap_key };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = snaps.remove(req).await;
 
-        let mut removed = 0;
-        for entry in entries {
-            let entry = entry.map_err(|err| AgentError::IoError(err.to_string()))?;
-            let path = entry.path();
-            let name = match entry.file_name().into_string() {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-
-            if name == "lock" || name.starts_with("last_reserved_ip") {
-                continue;
-            }
-
-            if name.parse::<Ipv4Addr>().is_err() {
-                continue;
-            }
-
-            if !active_ips.contains(&name) {
-                // RACE CONDITION FIX:
-                // Check if the file is very recent. A CNI plugin might have just allocated it
-                // for a container that is currently starting up but not yet fully "Up" or
-                // reporting an IP in inspection.
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Ok(age) = SystemTime::now().duration_since(modified) {
-                            if age < Duration::from_secs(60) {
-                                // Allocation is less than 60s old; unsafe to delete.
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                if fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
-            }
-        }
-
-        Ok(removed)
+        { self.container_io.lock().await.remove(container_id); }
+        let _ = fs::remove_dir_all(PathBuf::from(CONSOLE_BASE_DIR).join(container_id));
+        Ok(())
     }
 
-    fn release_static_ip(network: &str, ip: &str) -> std::io::Result<()> {
-        let path = format!("/var/lib/cni/networks/{}/{}", network, ip);
-        fs::remove_file(path)
-    }
+    // -- Console I/O --
 
-    /// Get container stats
-    pub async fn get_stats(&self, container_id: &str) -> AgentResult<ContainerStats> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("stats")
-            .arg("--no-stream")
-            .arg("--format")
-            .arg("json")
-            .arg(container_id)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(AgentError::ContainerError(
-                "Failed to get stats".to_string(),
-            ));
-        }
-
-        let json_output = String::from_utf8_lossy(&output.stdout);
-        // nerdctl returns newline-delimited JSON, parse the first line
-        let first_line = json_output
-            .lines()
-            .next()
-            .ok_or_else(|| AgentError::ContainerError("No stats returned".to_string()))?;
-
-        let stats: ContainerStats = serde_json::from_str(first_line)?;
-        Ok(stats)
-    }
-
-    /// Execute command in running container
-    pub async fn exec(&self, container_id: &str, command: Vec<&str>) -> AgentResult<String> {
-        let mut cmd = Command::new("nerdctl");
-        cmd.arg("--namespace")
-            .arg(&self.namespace)
-            .arg("exec")
-            .arg(container_id);
-
-        for arg in command {
-            cmd.arg(arg);
-        }
-
-        let output = cmd.output().await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Exec failed: {}",
-                stderr
-            )));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Send stdin to container
     pub async fn send_input(&self, container_id: &str, input: &str) -> AgentResult<()> {
         debug!("Sending input to container: {}", container_id);
-
-        // Best-effort: try to ensure the console writer exists before writing.
-        let writer_ensured = self.ensure_console_writer(container_id).await?;
-        debug!(
-            "Console writer ensured for {}: {}",
-            container_id, writer_ensured
-        );
-
-        if !writer_ensured {
-            debug!(
-                "Console writer could not be ensured for container {}; proceeding with FIFO/shell fallback",
-                container_id
-            );
-        }
-
-        // Try writing to the FIFO handle
-        if let Ok(true) = self.write_to_console_fifo(container_id, input).await {
-            debug!("Console input delivered via FIFO for {}", container_id);
+        self.ensure_container_io(container_id).await?;
+        let handle = {
+            let mut m = self.container_io.lock().await;
+            m.get_mut(container_id).and_then(|io| io.stdin_writer.as_ref().and_then(|w| w.try_clone().ok()))
+        };
+        if let Some(h) = handle {
+            let input = input.to_string();
+            spawn_blocking(move || {
+                let mut w = h;
+                w.write_all(input.as_bytes()).map_err(|e| AgentError::ContainerError(format!("stdin: {}", e)))?;
+                let _ = w.flush();
+                Ok::<(), AgentError>(())
+            }).await.map_err(|e| AgentError::ContainerError(e.to_string()))??;
             return Ok(());
         }
-        debug!("Console input FIFO write failed for {}", container_id);
-
-        // Fallback: exec into container and write to default stdin fd
-        let target_path = self
-            .resolve_stdin_path(container_id, None)
-            .await
-            .unwrap_or_else(|| "/proc/1/fd/0".to_string());
-
-        debug!(
-            "Console input falling back to exec for {} -> {}",
-            container_id, target_path
-        );
-        let mut child = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("exec")
-            .arg("-i")
-            .arg(container_id)
-            .arg("sh")
-            .arg("-c")
-            .arg(format!("cat > {}", shell_quote(&target_path)))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            stdin.write_all(input.as_bytes()).await?;
-        }
-        let output = child.wait_with_output().await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to send input to container: {}",
-                stderr
-            )));
-        }
-
+        // Fallback: exec
+        let exec_id = format!("stdin-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        let ep = io_dir.join(format!("e-{}-in", exec_id));
+        let eo = io_dir.join(format!("e-{}-out", exec_id));
+        if ep.exists() { fs::remove_file(&ep).ok(); }
+        create_fifo(&ep).ok();
+        File::create(&eo).ok();
+        let spec = serde_json::json!({"args":["sh","-c","cat > /proc/1/fd/0"],"env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"cwd":"/"});
+        let spec_any = Any { type_url: "types.containerd.io/opencontainers/runtime-spec/1/Process".to_string(), value: spec.to_string().into_bytes() };
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = ExecProcessRequest {
+            container_id: container_id.to_string(), exec_id: exec_id.clone(),
+            stdin: ep.to_string_lossy().to_string(), stdout: eo.to_string_lossy().to_string(),
+            stderr: "".to_string(), terminal: false, spec: Some(spec_any), ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.exec(req).await.map_err(grpc_err)?;
+        let req = StartRequest { container_id: container_id.to_string(), exec_id: exec_id.clone() };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tasks.start(req).await;
+        let epc = ep.clone();
+        let input_owned = input.to_string();
+        spawn_blocking(move || {
+            if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&epc) { let _ = f.write_all(input_owned.as_bytes()); }
+        }).await.ok();
+        let _ = fs::remove_file(&ep);
+        let _ = fs::remove_file(&eo);
         Ok(())
     }
 
-    async fn ensure_console_writer(&self, container_id: &str) -> AgentResult<bool> {
-        {
-            let writers = self.console_writers.lock().await;
-            if writers.contains_key(container_id) {
-                return Ok(true);
-            }
-        }
-
-        let fifo_path = PathBuf::from("/tmp/catalyst-console")
-            .join(container_id)
-            .join("stdin");
-        if !fifo_path.exists() {
-            return Ok(false);
-        }
-
-        if let Err(err) = self
-            .attach_console_writer(container_id, fifo_path.to_string_lossy().into_owned())
-            .await
-        {
-            debug!(
-                "Console writer attach failed for {}: {}. Falling back to exec input.",
-                container_id, err
-            );
-            return Ok(false);
-        }
-
-        Ok(true)
-    }
-
-    /// Restore console writers for all running containers
-    /// This should be called after reconnecting to ensure console input works
     pub async fn restore_console_writers(&self) -> AgentResult<()> {
         info!("Restoring console writers for running containers");
-
         let containers = self.list_containers().await?;
         let mut restored = 0;
-        let mut failed = 0;
-
-        for container in containers {
-            if !container.status.contains("Up") {
-                continue;
-            }
-
-            let fifo_path = PathBuf::from("/tmp/catalyst-console")
-                .join(&container.id)
-                .join("stdin");
-
-            if !fifo_path.exists() {
-                debug!(
-                    "No FIFO found for container {}, skipping console restoration",
-                    container.id
-                );
-                continue;
-            }
-
-            // Remove existing writer if it exists (it may be stale)
-            {
-                let mut writers = self.console_writers.lock().await;
-                writers.remove(&container.id);
-            }
-
-            // Reattach the console writer
-            match self
-                .attach_console_writer(&container.id, fifo_path.to_string_lossy().into_owned())
-                .await
-            {
-                Ok(_) => {
-                    info!("Restored console writer for container: {}", container.id);
-                    restored += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to restore console writer for {}: {}",
-                        container.id, e
-                    );
-                    failed += 1;
-                }
-            }
+        for c in containers {
+            if !c.status.contains("Up") { continue; }
+            if self.ensure_container_io(&c.id).await.is_ok() { restored += 1; }
         }
-
-        info!(
-            "Console writer restoration complete: {} restored, {} failed",
-            restored, failed
-        );
-
+        info!("Console writer restoration: {} restored", restored);
         Ok(())
     }
 
-    async fn write_to_console_fifo(&self, container_id: &str, input: &str) -> AgentResult<bool> {
-        let file_handle = {
-            let mut writers = self.console_writers.lock().await;
-            if let Some(writer) = writers.get_mut(container_id) {
-                // Try to clone the file handle
-                writer.file.try_clone().map_err(|e| {
-                    AgentError::ContainerError(format!("Failed to clone FIFO handle: {}", e))
-                })?
-            } else {
-                return Ok(false);
-            }
-        };
+    // -- Logs --
 
-        let input = input.to_string();
-        spawn_blocking(move || {
-            let mut writer = file_handle;
-            match writer.write_all(input.as_bytes()) {
-                Ok(_) => {
-                    let _ = writer.flush();
-                    Ok(())
+    pub async fn get_logs(&self, container_id: &str, lines: Option<u32>) -> AgentResult<String> {
+        let base = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        let mut output = String::new();
+        for name in ["stdout", "stderr"] {
+            if let Ok(content) = tokio::fs::read_to_string(base.join(name)).await {
+                if let Some(n) = lines {
+                    let all: Vec<&str> = content.lines().collect();
+                    let start = all.len().saturating_sub(n as usize);
+                    for l in &all[start..] { output.push_str(l); output.push('\n'); }
+                } else { output.push_str(&content); }
+            }
+        }
+        Ok(output)
+    }
+
+    pub async fn stream_logs<F>(&self, container_id: &str, mut callback: F) -> AgentResult<()>
+    where F: FnMut(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>,
+    {
+        let base = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        let mut positions = [0u64; 2];
+        let paths = [base.join("stdout"), base.join("stderr")];
+        loop {
+            let running = self.is_container_running(container_id).await.unwrap_or(false);
+            for i in 0..2 {
+                if let Ok(content) = tokio::fs::read_to_string(&paths[i]).await {
+                    if (positions[i] as usize) < content.len() {
+                        for line in content[positions[i] as usize..].lines() { callback(line.to_string()).await; }
+                        positions[i] = content.len() as u64;
+                    }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                    // Pipe broken means container probably stopped reading
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "Container stdin closed",
-                    ))
-                }
-                Err(e) => Err(e),
             }
-        })
-        .await
-        .map_err(|e| AgentError::ContainerError(format!("Console write task failed: {}", e)))?
-        .map_err(|e| AgentError::ContainerError(format!("Failed to write console input: {}", e)))?;
-
-        Ok(true)
+            if !running { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(())
     }
 
-    async fn resolve_stdin_path(
-        &self,
-        container_id: &str,
-        process_hint: Option<&str>,
-    ) -> Option<String> {
-        let ps_output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("exec")
-            .arg(container_id)
-            .arg("sh")
-            .arg("-c")
-            .arg("ps -eo pid,ppid,comm,args")
-            .output()
-            .await
-            .ok()?;
-
-        if !ps_output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&ps_output.stdout);
-        let mut candidates: Vec<(i32, i32, String, String)> = Vec::new();
-
-        for (idx, line) in stdout.lines().enumerate() {
-            if idx == 0 {
-                continue;
-            }
-            let mut parts = line.split_whitespace();
-            let pid = match parts.next().and_then(|v| v.parse::<i32>().ok()) {
-                Some(value) => value,
-                None => continue,
-            };
-            let ppid = match parts.next().and_then(|v| v.parse::<i32>().ok()) {
-                Some(value) => value,
-                None => continue,
-            };
-            let comm = parts.next().unwrap_or("").to_string();
-            let args = parts.collect::<Vec<_>>().join(" ");
-            candidates.push((pid, ppid, comm, args));
-        }
-
-        if let Some(hint) = process_hint {
-            let hint_lower = hint.to_lowercase();
-            let mut matches = candidates
-                .iter()
-                .filter(|(_, _, comm, args)| {
-                    comm.to_lowercase() == hint_lower || args.to_lowercase().contains(&hint_lower)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            matches.sort_by_key(|(pid, ppid, _, _)| (*ppid, *pid));
-            if let Some((pid, _, _, _)) = matches.first() {
-                debug!(
-                    "Resolved stdin path for {} using hint '{}': /proc/{}/fd/0",
-                    container_id, hint, pid
-                );
-                return Some(format!("/proc/{}/fd/0", pid));
-            }
-        }
-
-        let mut children_of_init = candidates
-            .iter()
-            .filter(|(_, ppid, _, _)| *ppid == 1)
-            .cloned()
-            .collect::<Vec<_>>();
-        if children_of_init.len() == 1 {
-            if let Some((pid, _, _, _)) = children_of_init.pop() {
-                debug!(
-                    "Resolved stdin path for {} using PID 1 child: /proc/{}/fd/0",
-                    container_id, pid
-                );
-                return Some(format!("/proc/{}/fd/0", pid));
-            }
-        }
-
-        None
+    pub async fn spawn_log_stream(&self, container_id: &str) -> AgentResult<LogStream> {
+        info!("Starting log stream for container: {}", container_id);
+        let base = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        let stdout = if base.join("stdout").exists() { Some(tokio::fs::File::open(base.join("stdout")).await?) } else { None };
+        let stderr = if base.join("stderr").exists() { Some(tokio::fs::File::open(base.join("stderr")).await?) } else { None };
+        Ok(LogStream { stdout, stderr, container_id: container_id.to_string() })
     }
 
-    /// Get container IP address
-    pub async fn get_container_ip(&self, container_id: &str) -> AgentResult<String> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("inspect")
-            .arg(container_id)
-            .arg("--format")
-            // BUG FIX: Add newline separator. Original: {{...}}{{...}} concatenated IPs.
-            // New: {{...}}{{.IPAddress}}\n{{end}}
-            .arg("{{range .NetworkSettings.Networks}}{{.IPAddress}}\n{{end}}")
-            .output()
-            .await?;
+    // -- Info & status --
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AgentError::ContainerError(format!(
-                "Failed to get container IP: {}",
-                stderr
-            )));
+    pub async fn list_containers(&self) -> AgentResult<Vec<ContainerInfo>> {
+        let mut client = ContainersClient::new(self.channel.clone());
+        let req = ListContainersRequest { ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = client.list(req).await.map_err(grpc_err)?;
+        let mut result = Vec::new();
+        for c in resp.into_inner().containers {
+            let running = self.is_container_running(&c.id).await.unwrap_or(false);
+            result.push(ContainerInfo {
+                id: c.id.clone(), names: c.id.clone(),
+                managed: c.labels.contains_key("catalyst.managed"),
+                status: if running { "Up".to_string() } else { "Exited".to_string() },
+                image: c.image.clone(), command: String::new(),
+            });
         }
-
-        let full_output = String::from_utf8_lossy(&output.stdout);
-
-        // Take the first non-empty line
-        let ip = full_output
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty())
-            .unwrap_or("")
-            .to_string();
-
-        Ok(ip)
+        Ok(result)
     }
 
-    /// Check if a container exists
     pub async fn container_exists(&self, container_id: &str) -> bool {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("inspect")
-            .arg(container_id)
-            .output()
-            .await;
-
-        match output {
-            Ok(out) => out.status.success(),
-            Err(_) => false,
-        }
+        let mut client = ContainersClient::new(self.channel.clone());
+        let req = GetContainerRequest { id: container_id.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        client.get(req).await.is_ok()
     }
 
-    /// Check if a container is running
     pub async fn is_container_running(&self, container_id: &str) -> AgentResult<bool> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("inspect")
-            .arg(container_id)
-            .arg("--format")
-            .arg("{{.State.Running}}")
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Ok(false);
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = containerd_client::services::v1::GetRequest {
+            container_id: container_id.to_string(), ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        match tasks.get(req).await {
+            Ok(resp) => Ok(resp.into_inner().process.map(|p| p.status == 2).unwrap_or(false)),
+            Err(e) if e.code() == tonic::Code::NotFound => Ok(false),
+            Err(e) => Err(grpc_err(e)),
         }
-
-        let state = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_lowercase();
-        Ok(state == "true")
     }
 
-    /// Get container exit code if available
     pub async fn get_container_exit_code(&self, container_id: &str) -> AgentResult<Option<i32>> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("inspect")
-            .arg(container_id)
-            .arg("--format")
-            .arg("{{.State.ExitCode}}")
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Ok(None);
-        }
-
-        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        match value.parse::<i32>() {
-            Ok(code) => Ok(Some(code)),
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = containerd_client::services::v1::GetRequest {
+            container_id: container_id.to_string(), ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        match tasks.get(req).await {
+            Ok(resp) => Ok(resp.into_inner().process.and_then(|p| if p.status == 3 { Some(p.exit_status as i32) } else { None })),
             Err(_) => Ok(None),
         }
     }
 
-    /// Spawn a process to stream container logs (stdout/stderr)
-    /// Returns a handle to the log streaming process
-    pub async fn spawn_log_stream(&self, container_id: &str) -> AgentResult<tokio::process::Child> {
-        info!("Starting log stream for container: {}", container_id);
-
-        let child = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("logs")
-            .arg("--follow")
-            .arg("--timestamps")
-            .arg(container_id)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        Ok(child)
+    pub async fn get_container_ip(&self, container_id: &str) -> AgentResult<String> {
+        // Check CNI result file
+        let cni_state = format!("/var/lib/cni/results/catalyst-{}", container_id);
+        if let Ok(content) = fs::read_to_string(&cni_state) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(ips) = v.get("ips").and_then(|v| v.as_array()) {
+                    for ip in ips {
+                        if let Some(addr) = ip.get("address").and_then(|v| v.as_str()) {
+                            let a = addr.split('/').next().unwrap_or("");
+                            if !a.is_empty() { return Ok(a.to_string()); }
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: scan CNI networks dir
+        if let Ok(entries) = fs::read_dir("/var/lib/cni/networks") {
+            for entry in entries.flatten() {
+                let d = entry.path();
+                if !d.is_dir() { continue; }
+                if let Ok(files) = fs::read_dir(&d) {
+                    for f in files.flatten() {
+                        let n = f.file_name().to_string_lossy().to_string();
+                        if n.parse::<Ipv4Addr>().is_ok() {
+                            if let Ok(c) = fs::read_to_string(f.path()) {
+                                if c.trim().contains(container_id) { return Ok(n); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(String::new())
     }
 
-    /// Subscribe to container events for a specific container
-    /// Returns a child process streaming events (one event per line)
-    /// Events include: start, die, stop, kill, etc.
-    pub async fn subscribe_to_container_events(
-        &self,
-        container_id: &str,
-    ) -> AgentResult<tokio::process::Child> {
-        debug!("Subscribing to events for container: {}", container_id);
+    // -- Stats (cgroup v2) --
 
-        let child = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("events")
-            .arg("--filter")
-            .arg(format!("container={}", container_id))
-            .arg("--format")
-            .arg("{{.Status}}")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                AgentError::ContainerError(format!("Failed to spawn events stream: {}", e))
-            })?;
-
-        Ok(child)
+    pub async fn get_stats(&self, container_id: &str) -> AgentResult<ContainerStats> {
+        let cg = find_container_cgroup(container_id).unwrap_or_default();
+        let cpu = if !cg.is_empty() { read_cgroup_cpu_percent(&cg).await.unwrap_or(0.0) } else { 0.0 };
+        let mem = if !cg.is_empty() { read_cgroup_memory(&cg).await.unwrap_or(0) } else { 0 };
+        Ok(ContainerStats {
+            container_id: container_id.to_string(), container_name: container_id.to_string(),
+            cpu_percent: format!("{:.2}%", cpu),
+            memory_usage: format!("{}MiB / 0MiB", mem / (1024 * 1024)),
+            net_io: "0B / 0B".to_string(), block_io: "0B / 0B".to_string(),
+        })
     }
 
-    /// Subscribe to all container events in the namespace
-    /// Returns events with format: container_name status (e.g., "server-uuid start")
-    pub async fn subscribe_to_all_events(&self) -> AgentResult<tokio::process::Child> {
-        debug!(
-            "Subscribing to all container events in namespace: {}",
-            self.namespace
+    pub async fn exec(&self, container_id: &str, command: Vec<&str>) -> AgentResult<String> {
+        let exec_id = format!("exec-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        fs::create_dir_all(&io_dir).ok();
+        let op = io_dir.join(format!("{}-out", exec_id));
+        let ep = io_dir.join(format!("{}-err", exec_id));
+        File::create(&op).ok();
+        File::create(&ep).ok();
+
+        let spec = serde_json::json!({"args":command,"env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"cwd":"/data"});
+        let spec_any = Any { type_url: "types.containerd.io/opencontainers/runtime-spec/1/Process".to_string(), value: spec.to_string().into_bytes() };
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = ExecProcessRequest {
+            container_id: container_id.to_string(), exec_id: exec_id.clone(),
+            stdin: "".to_string(), stdout: op.to_string_lossy().to_string(),
+            stderr: ep.to_string_lossy().to_string(), terminal: false, spec: Some(spec_any), ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.exec(req).await.map_err(grpc_err)?;
+
+        let req = StartRequest { container_id: container_id.to_string(), exec_id: exec_id.clone() };
+        let req = with_namespace!(req, &self.namespace);
+        tasks.start(req).await.map_err(grpc_err)?;
+
+        let req = WaitRequest { container_id: container_id.to_string(), exec_id };
+        let req = with_namespace!(req, &self.namespace);
+        let _ = tokio::time::timeout(Duration::from_secs(30), tasks.wait(req)).await;
+
+        let out = tokio::fs::read_to_string(&op).await.unwrap_or_default();
+        let err = tokio::fs::read_to_string(&ep).await.unwrap_or_default();
+        let _ = fs::remove_file(&op);
+        let _ = fs::remove_file(&ep);
+        if !err.is_empty() && out.is_empty() { return Err(AgentError::ContainerError(format!("Exec failed: {}", err))); }
+        Ok(out)
+    }
+
+    // -- Events --
+
+    pub async fn subscribe_to_container_events(&self, container_id: &str) -> AgentResult<EventStream> {
+        let mut client = EventsClient::new(self.channel.clone());
+        let req = SubscribeRequest { filters: vec![
+            format!("topic==/tasks/exit,container=={}", container_id),
+            format!("topic==/tasks/start,container=={}", container_id),
+            format!("topic==/tasks/delete,container=={}", container_id),
+        ]};
+        let req = with_namespace!(req, &self.namespace);
+        let resp = client.subscribe(req).await.map_err(grpc_err)?;
+        Ok(EventStream { receiver: resp.into_inner() })
+    }
+
+    pub async fn subscribe_to_all_events(&self) -> AgentResult<EventStream> {
+        let mut client = EventsClient::new(self.channel.clone());
+        let req = SubscribeRequest { filters: vec!["topic~=/tasks/".to_string(), "topic~=/containers/".to_string()] };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = client.subscribe(req).await.map_err(grpc_err)?;
+        Ok(EventStream { receiver: resp.into_inner() })
+    }
+
+    // -- IP allocation --
+
+    pub async fn clean_stale_ip_allocations(&self, network: &str) -> AgentResult<usize> {
+        let dir = format!("/var/lib/cni/networks/{}", network);
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e, Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(AgentError::IoError(e.to_string())),
+        };
+        let containers = self.list_containers().await?;
+        let mut active_ips = HashSet::new();
+        let mut running = 0;
+        for c in containers { if !c.status.contains("Up") { continue; } running += 1;
+            if let Ok(ip) = self.get_container_ip(&c.id).await { if !ip.is_empty() { active_ips.insert(ip); } }
+        }
+        if running > 0 && active_ips.is_empty() { return Ok(0); }
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry.map_err(|e| AgentError::IoError(e.to_string()))?;
+            let path = entry.path();
+            let name = match entry.file_name().into_string() { Ok(v) => v, Err(_) => continue };
+            if name == "lock" || name.starts_with("last_reserved_ip") { continue; }
+            if name.parse::<Ipv4Addr>().is_err() { continue; }
+            if !active_ips.contains(&name) {
+                if let Ok(md) = fs::metadata(&path) {
+                    if let Ok(m) = md.modified() {
+                        if let Ok(age) = SystemTime::now().duration_since(m) { if age < Duration::from_secs(60) { continue; } }
+                    }
+                }
+                if fs::remove_file(&path).is_ok() { removed += 1; }
+            }
+        }
+        Ok(removed)
+    }
+
+    pub fn release_static_ip(network: &str, ip: &str) -> std::io::Result<()> {
+        fs::remove_file(format!("/var/lib/cni/networks/{}/{}", network, ip))
+    }
+
+    // -- Internal helpers --
+
+    async fn wait_for_exit(&self, container_id: &str) -> AgentResult<u32> {
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = WaitRequest { container_id: container_id.to_string(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = tasks.wait(req).await.map_err(grpc_err)?;
+        Ok(resp.into_inner().exit_status)
+    }
+
+    async fn ensure_container_io(&self, container_id: &str) -> AgentResult<bool> {
+        if self.container_io.lock().await.contains_key(container_id) { return Ok(true); }
+        let io_dir = PathBuf::from(CONSOLE_BASE_DIR).join(container_id);
+        let stdin_path = io_dir.join("stdin");
+        if !stdin_path.exists() { return Ok(false); }
+        let writer = open_fifo_rdwr(&stdin_path)?;
+        self.container_io.lock().await.insert(container_id.to_string(), ContainerIo {
+            _stdin_fifo: stdin_path, _stdout_file: io_dir.join("stdout"),
+            _stderr_file: io_dir.join("stderr"), stdin_writer: Some(writer),
+        });
+        Ok(true)
+    }
+
+    async fn ensure_image(&self, image: &str) -> AgentResult<()> {
+        let qualified = Self::qualify_image_ref(image);
+        let mut client = ImagesClient::new(self.channel.clone());
+        let req = GetImageRequest { name: qualified.clone() };
+        let req = with_namespace!(req, &self.namespace);
+        match client.get(req).await {
+            Ok(_) => return Ok(()),
+            Err(e) if e.code() == tonic::Code::NotFound => info!("Image {} not found, pulling...", qualified),
+            Err(e) => return Err(grpc_err(e)),
+        }
+        let output = Command::new("ctr").arg("-n").arg(&self.namespace).arg("images").arg("pull").arg(&qualified)
+            .output().await.map_err(|e| AgentError::ContainerError(format!("pull: {}", e)))?;
+        if !output.status.success() {
+            return Err(AgentError::ContainerError(format!("Image pull failed: {}", String::from_utf8_lossy(&output.stderr))));
+        }
+        info!("Image {} pulled", qualified);
+        Ok(())
+    }
+
+    /// Normalize a Docker-style short image reference to a fully-qualified containerd reference.
+    /// e.g. "eclipse-temurin:21-jre" -> "docker.io/library/eclipse-temurin:21-jre"
+    ///      "ghcr.io/org/image:tag"  -> "ghcr.io/org/image:tag" (unchanged)
+    fn qualify_image_ref(image: &str) -> String {
+        let name = image.split(':').next().unwrap_or(image);
+        if name.contains('/') {
+            // Already has a registry or org prefix (e.g. ghcr.io/org/img, user/img)
+            image.to_string()
+        } else {
+            // Bare image name like "alpine:3.19" -> "docker.io/library/alpine:3.19"
+            format!("docker.io/library/{}", image)
+        }
+    }
+
+    /// Read the OCI image config to extract default environment variables.
+    /// Falls back to empty vec on any error (best-effort).
+    async fn get_image_env(&self, image: &str) -> Vec<String> {
+        match self.get_image_env_inner(image).await {
+            Ok(env) => env,
+            Err(e) => {
+                warn!("Failed to read image env for {}: {}", image, e);
+                vec![]
+            }
+        }
+    }
+
+    async fn get_image_env_inner(&self, image: &str) -> AgentResult<Vec<String>> {
+        let mut images = ImagesClient::new(self.channel.clone());
+        let req = GetImageRequest { name: image.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        let resp = images.get(req).await.map_err(grpc_err)?;
+        let img = resp.into_inner().image
+            .ok_or_else(|| AgentError::ContainerError("No image returned".into()))?;
+        let target = img.target
+            .ok_or_else(|| AgentError::ContainerError("Image has no target descriptor".into()))?;
+
+        let manifest_bytes = self.read_content_blob(&target.digest).await?;
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| AgentError::ContainerError(format!("Bad manifest JSON: {}", e)))?;
+
+        // Handle manifest index (multi-platform) vs single manifest
+        let config_digest = if let Some(manifests) = manifest.get("manifests").and_then(|v| v.as_array()) {
+            let m = manifests.iter()
+                .find(|m| {
+                    let p = m.get("platform");
+                    p.and_then(|p| p.get("architecture")).and_then(|v| v.as_str()) == Some("amd64")
+                        && p.and_then(|p| p.get("os")).and_then(|v| v.as_str()) == Some("linux")
+                })
+                .or_else(|| manifests.first())
+                .and_then(|m| m.get("digest")).and_then(|v| v.as_str())
+                .ok_or_else(|| AgentError::ContainerError("No manifest in index".into()))?;
+            let inner_bytes = self.read_content_blob(m).await?;
+            let inner: serde_json::Value = serde_json::from_slice(&inner_bytes)
+                .map_err(|e| AgentError::ContainerError(format!("Bad inner manifest: {}", e)))?;
+            inner.get("config").and_then(|c| c.get("digest")).and_then(|v| v.as_str())
+                .ok_or_else(|| AgentError::ContainerError("No config in manifest".into()))?.to_string()
+        } else {
+            manifest.get("config").and_then(|c| c.get("digest")).and_then(|v| v.as_str())
+                .ok_or_else(|| AgentError::ContainerError("No config in manifest".into()))?.to_string()
+        };
+
+        let config_bytes = self.read_content_blob(&config_digest).await?;
+        let config: serde_json::Value = serde_json::from_slice(&config_bytes)
+            .map_err(|e| AgentError::ContainerError(format!("Bad config JSON: {}", e)))?;
+
+        Ok(config.get("config").and_then(|c| c.get("Env"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default())
+    }
+
+    async fn read_content_blob(&self, digest: &str) -> AgentResult<Vec<u8>> {
+        let mut content = ContentClient::new(self.channel.clone());
+        let req = ReadContentRequest { digest: digest.to_string(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        let mut stream = content.read(req).await.map_err(grpc_err)?.into_inner();
+        let mut data = Vec::new();
+        while let Some(chunk) = stream.message().await.map_err(grpc_err)? {
+            data.extend_from_slice(&chunk.data);
+        }
+        Ok(data)
+    }
+
+    async fn prepare_snapshot(&self, image: &str, key: &str) -> AgentResult<()> {
+        let _ = Command::new("ctr").arg("-n").arg(&self.namespace)
+            .arg("images").arg("unpack").arg("--snapshotter").arg("overlayfs").arg(image)
+            .output().await;
+
+        let mut snaps = SnapshotsClient::new(self.channel.clone());
+        // Try using image ref as parent first
+        let req = PrepareSnapshotRequest {
+            snapshotter: "overlayfs".to_string(), key: key.to_string(), parent: image.to_string(), ..Default::default()
+        };
+        let req = with_namespace!(req, &self.namespace);
+        if snaps.prepare(req).await.is_ok() { return Ok(()); }
+
+        // Find the correct committed snapshot parent
+        if let Ok(out) = Command::new("ctr").arg("-n").arg(&self.namespace).arg("snapshot").arg("ls").output().await {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines().skip(1) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 && parts[2] == "Committed" {
+                    let req = PrepareSnapshotRequest {
+                        snapshotter: "overlayfs".to_string(), key: key.to_string(), parent: parts[0].to_string(), ..Default::default()
+                    };
+                    let req = with_namespace!(req, &self.namespace);
+                    if snaps.prepare(req).await.is_ok() { return Ok(()); }
+                }
+            }
+        }
+        Err(AgentError::ContainerError(format!("Failed to prepare snapshot for {}", image)))
+    }
+
+    async fn get_snapshot_mounts(&self, key: &str) -> AgentResult<Vec<containerd_client::types::Mount>> {
+        let mut snaps = SnapshotsClient::new(self.channel.clone());
+        let req = MountsRequest { snapshotter: "overlayfs".to_string(), key: key.to_string() };
+        let req = with_namespace!(req, &self.namespace);
+        Ok(snaps.mounts(req).await.map_err(grpc_err)?.into_inner().mounts)
+    }
+
+    fn build_oci_spec(&self, config: &ContainerConfig<'_>, io_dir: &Path, use_host_network: bool, image_env: &[String]) -> AgentResult<serde_json::Value> {
+        // Start with image env as base, then overlay our defaults and config env.
+        // This preserves image-specific PATH, JAVA_HOME, etc.
+        let mut env_map: HashMap<String, String> = HashMap::new();
+        for entry in image_env {
+            if let Some((k, v)) = entry.split_once('=') {
+                env_map.insert(k.to_string(), v.to_string());
+            }
+        }
+        // Ensure basic defaults exist (don't override image PATH if present)
+        env_map.entry("PATH".to_string())
+            .or_insert_with(|| "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string());
+        env_map.insert("TERM".to_string(), "xterm".to_string());
+        // Template/config env takes highest priority
+        for (k, v) in config.env { env_map.insert(k.to_string(), v.to_string()); }
+        let env_list: Vec<String> = env_map.into_iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+
+        let args = if !config.startup_command.is_empty() {
+            let ep = io_dir.join("catalyst-entrypoint");
+            let fifo = io_dir.join("stdin");
+            let script = format!("#!/bin/bash\nset -e\nFIFO=\"{}\"\nexec 3<> \"$FIFO\"\nexec < \"$FIFO\"\nexec {}\n", fifo.display(), config.startup_command);
+            let mut f = File::create(&ep).map_err(|e| AgentError::ContainerError(e.to_string()))?;
+            f.write_all(script.as_bytes()).map_err(|e| AgentError::ContainerError(e.to_string()))?;
+            let mut p = fs::metadata(&ep).map_err(|e| AgentError::ContainerError(e.to_string()))?.permissions();
+            p.set_mode(0o755); fs::set_permissions(&ep, p).ok();
+            vec![ep.to_string_lossy().to_string()]
+        } else { vec!["sh".to_string()] };
+
+        let mem_limit = (config.memory_mb as i64) * 1024 * 1024;
+        let cpu_quota = (config.cpu_cores as i64) * 100_000;
+        let cgroup_path = format!("/{}/{}", self.namespace, config.container_id);
+        let caps = ["CAP_CHOWN","CAP_SETUID","CAP_SETGID","CAP_NET_BIND_SERVICE"];
+        let mut mounts = base_mounts(config.data_dir);
+        mounts.push(serde_json::json!({"destination":io_dir.to_string_lossy().to_string(),"type":"bind","source":io_dir.to_string_lossy().to_string(),"options":["rbind","rw"]}));
+
+        // Generate /etc/hosts so the container hostname resolves (Java getLocalHost() etc.)
+        let hosts_path = io_dir.join("hosts");
+        let hosts_content = format!(
+            "127.0.0.1\tlocalhost\n::1\tlocalhost\n127.0.0.1\t{}\n",
+            config.container_id
         );
+        fs::write(&hosts_path, &hosts_content).ok();
+        mounts.push(serde_json::json!({"destination":"/etc/hosts","type":"bind","source":hosts_path.to_string_lossy().to_string(),"options":["rbind","rw"]}));
 
-        // Use JSON format which is more reliable than custom formats
-        let child = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("events")
-            .arg("--format")
-            .arg("json")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                AgentError::ContainerError(format!("Failed to spawn global events stream: {}", e))
-            })?;
+        // Provide /etc/resolv.conf for DNS resolution inside the container
+        let resolv_path = io_dir.join("resolv.conf");
+        {
+            let host_resolv = fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+            // Use host DNS config plus public fallbacks
+            let mut resolv = host_resolv.trim().to_string();
+            if !resolv.contains("8.8.8.8") {
+                resolv.push_str("\nnameserver 8.8.8.8\nnameserver 8.8.4.4\n");
+            }
+            fs::write(&resolv_path, &resolv).ok();
+        }
+        mounts.push(serde_json::json!({"destination":"/etc/resolv.conf","type":"bind","source":resolv_path.to_string_lossy().to_string(),"options":["rbind","rw"]}));
 
-        Ok(child)
+        for (h, c) in [("/etc/machine-id","/etc/machine-id"),("/var/lib/dbus/machine-id","/var/lib/dbus/machine-id"),("/sys/class/dmi/id/product_uuid","/sys/class/dmi/id/product_uuid")] {
+            if Path::new(h).exists() { mounts.push(serde_json::json!({"destination":c,"type":"bind","source":h,"options":["rbind","ro"]})); }
+        }
+        let mut ns = vec![serde_json::json!({"type":"pid"}),serde_json::json!({"type":"ipc"}),serde_json::json!({"type":"uts"}),serde_json::json!({"type":"mount"})];
+        if !use_host_network { ns.push(serde_json::json!({"type":"network"})); }
+
+        Ok(serde_json::json!({
+            "ociVersion":"1.1.0",
+            "process":{"terminal":false,"user":{"uid":0,"gid":0},"args":args,"env":env_list,"cwd":"/data",
+                "capabilities":{"bounding":caps,"effective":caps,"permitted":caps,"ambient":caps},
+                "noNewPrivileges":true,"rlimits":[{"type":"RLIMIT_NOFILE","hard":65536u64,"soft":65536u64}]},
+            "root":{"path":"rootfs","readonly":false},"hostname":config.container_id,"mounts":mounts,
+            "linux":{"cgroupsPath":cgroup_path,"resources":{"memory":{"limit":mem_limit},"cpu":{"quota":cpu_quota,"period":100000u64},
+                "devices":[{"allow":false,"access":"rwm"},{"allow":true,"type":"c","major":1,"minor":3,"access":"rwm"},
+                    {"allow":true,"type":"c","major":1,"minor":5,"access":"rwm"},{"allow":true,"type":"c","major":1,"minor":8,"access":"rwm"},
+                    {"allow":true,"type":"c","major":1,"minor":9,"access":"rwm"},{"allow":true,"type":"c","major":5,"minor":0,"access":"rwm"},
+                    {"allow":true,"type":"c","major":5,"minor":1,"access":"rwm"}]},
+                "namespaces":ns,"maskedPaths":masked_paths(),"readonlyPaths":readonly_paths()}
+        }))
     }
+
+    async fn setup_cni_network(&self, container_id: &str, pid: u32, network_mode: Option<&str>, network_ip: Option<&str>, primary_port: u16, port_bindings: &HashMap<u16, u16>) -> AgentResult<()> {
+        let netns = format!("/proc/{}/ns/net", pid);
+        let network = network_mode.unwrap_or("bridge");
+        if network == "host" { return Ok(()); }
+        let mut cfg = if network == "bridge" || network == "default" {
+            serde_json::json!({"cniVersion":"0.4.0","name":"catalyst","type":"bridge","bridge":"catalyst0","isGateway":true,"ipMasq":true,"ipam":{"type":"host-local","ranges":[[{"subnet":"10.42.0.0/16"}]],"routes":[{"dst":"0.0.0.0/0"}],"dataDir":"/var/lib/cni/networks"}})
+        } else {
+            // macvlan or custom network — auto-detect host network config
+            let (iface, subnet, gateway) = detect_host_network().unwrap_or_else(|| {
+                warn!("Could not detect host network, falling back to eth0/192.168.1.0");
+                ("eth0".to_string(), "192.168.1.0/24".to_string(), "192.168.1.1".to_string())
+            });
+            info!("macvlan network '{}': master={}, subnet={}, gateway={}", network, iface, subnet, gateway);
+            serde_json::json!({"cniVersion":"0.4.0","name":network,"type":"macvlan","master":iface,"mode":"bridge","ipam":{"type":"host-local","ranges":[[{"subnet":subnet,"gateway":gateway}]],"routes":[{"dst":"0.0.0.0/0"}],"dataDir":"/var/lib/cni/networks"}})
+        };
+        if let Some(ip) = network_ip {
+            if let Some(ipam) = cfg.get_mut("ipam") {
+                // Determine prefix length from the subnet in config
+                let prefix = ipam.get("ranges").and_then(|r| r.get(0)).and_then(|r| r.get(0))
+                    .and_then(|r| r.get("subnet")).and_then(|s| s.as_str())
+                    .and_then(|s| s.split('/').nth(1)).unwrap_or("24");
+                ipam["addresses"] = serde_json::json!([{"address":format!("{}/{}", ip, prefix)}]);
+            }
+        }
+        // Store CNI config for proper teardown
+        let cfg_path = format!("/var/lib/cni/results/catalyst-{}-config", container_id);
+        if let Ok(j) = serde_json::to_string(&cfg) { let _ = fs::write(&cfg_path, &j); }
+        let result = self.exec_cni_plugin(&cfg, "ADD", container_id, &netns, "eth0").await?;
+        let rp = format!("/var/lib/cni/results/catalyst-{}", container_id);
+        if let Ok(j) = serde_json::to_string_pretty(&result) { let _ = fs::write(&rp, &j); }
+        let cip = result.get("ips").and_then(|v|v.as_array()).and_then(|a|a.first()).and_then(|ip|ip.get("address")).and_then(|v|v.as_str()).unwrap_or("").split('/').next().unwrap_or("");
+        if !cip.is_empty() {
+            if !port_bindings.is_empty() { for (cp,hp) in port_bindings { self.setup_port_forward(*hp,*cp,cip).await?; } }
+            else if primary_port > 0 { self.setup_port_forward(primary_port,primary_port,cip).await?; }
+        }
+        Ok(())
+    }
+
+    async fn exec_cni_plugin(&self, config: &serde_json::Value, command: &str, cid: &str, netns: &str, ifname: &str) -> AgentResult<serde_json::Value> {
+        let ptype = config["type"].as_str().unwrap_or("bridge");
+        let ppath = format!("{}/{}", CNI_BIN_DIR, ptype);
+        if !Path::new(&ppath).exists() { return Err(AgentError::ContainerError(format!("CNI plugin not found: {}", ppath))); }
+        let cfg = serde_json::to_string(config).map_err(|e| AgentError::ContainerError(e.to_string()))?;
+        let mut child = Command::new(&ppath)
+            .env("CNI_COMMAND",command).env("CNI_CONTAINERID",cid).env("CNI_NETNS",netns).env("CNI_IFNAME",ifname).env("CNI_PATH",CNI_BIN_DIR)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+            .spawn().map_err(|e| AgentError::ContainerError(format!("CNI: {}", e)))?;
+        if let Some(mut stdin) = child.stdin.take() { use tokio::io::AsyncWriteExt; stdin.write_all(cfg.as_bytes()).await?; drop(stdin); }
+        let out = child.wait_with_output().await?;
+        if !out.status.success() { return Err(AgentError::ContainerError(format!("CNI {} failed: {}", command, String::from_utf8_lossy(&out.stderr)))); }
+        Ok(serde_json::from_slice(&out.stdout).unwrap_or(serde_json::json!({})))
+    }
+
+    async fn setup_port_forward(&self, hp: u16, cp: u16, cip: &str) -> AgentResult<()> {
+        let dest = format!("{}:{}", cip, cp);
+        let hps = hp.to_string();
+        let cps = cp.to_string();
+        for args in [
+            vec!["-t","nat","-A","PREROUTING","-p","tcp","--dport",&hps,"-j","DNAT","--to-destination",&dest],
+            vec!["-t","nat","-A","OUTPUT","-p","tcp","--dport",&hps,"-j","DNAT","--to-destination",&dest],
+            vec!["-t","nat","-A","POSTROUTING","-p","tcp","-d",cip,"--dport",&cps,"-j","MASQUERADE"],
+        ] {
+            let o = Command::new("iptables").args(&args).output().await?;
+            if !o.status.success() { warn!("iptables: {}", String::from_utf8_lossy(&o.stderr)); }
+        }
+        Ok(())
+    }
+
+    async fn teardown_cni_network(&self, container_id: &str) -> AgentResult<()> {
+        let rp = format!("/var/lib/cni/results/catalyst-{}", container_id);
+        if !Path::new(&rp).exists() { return Ok(()); }
+        // Load stored CNI config for proper teardown (bridge vs macvlan)
+        let cfg_path = format!("/var/lib/cni/results/catalyst-{}-config", container_id);
+        let cfg = fs::read_to_string(&cfg_path).ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .unwrap_or_else(|| serde_json::json!({"cniVersion":"0.4.0","name":"catalyst","type":"bridge","bridge":"catalyst0","ipam":{"type":"host-local","dataDir":"/var/lib/cni/networks"}}));
+        let mut tasks = TasksClient::new(self.channel.clone());
+        let req = containerd_client::services::v1::GetRequest { container_id: container_id.to_string(), ..Default::default() };
+        let req = with_namespace!(req, &self.namespace);
+        let netns = match tasks.get(req).await {
+            Ok(r) => r.into_inner().process.map(|p| format!("/proc/{}/ns/net", p.pid)).unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        if !netns.is_empty() { let _ = self.exec_cni_plugin(&cfg, "DEL", container_id, &netns, "eth0").await; }
+        let _ = fs::remove_file(&rp);
+        let _ = fs::remove_file(&cfg_path);
+        Ok(())
+    }
+
+    fn cleanup_io(&self, container_id: &str) {
+        let _ = fs::remove_dir_all(PathBuf::from(CONSOLE_BASE_DIR).join(container_id));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Auto-detect the host's default network interface, subnet, and gateway.
+fn detect_host_network() -> Option<(String, String, String)> {
+    // Parse `ip -4 route show default` → "default via <gw> dev <iface> ..."
+    let output = std::process::Command::new("ip")
+        .args(["-4", "route", "show", "default"])
+        .output().ok()?;
+    let route = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = route.split_whitespace().collect();
+    let gw_idx = parts.iter().position(|&p| p == "via")?;
+    let if_idx = parts.iter().position(|&p| p == "dev")?;
+    let gateway = parts.get(gw_idx + 1)?.to_string();
+    let iface = parts.get(if_idx + 1)?.to_string();
+
+    // Parse interface address → "inet <ip>/<prefix> ..."
+    let output = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show", &iface])
+        .output().ok()?;
+    let addr_line = String::from_utf8_lossy(&output.stdout);
+    let cidr = addr_line.split_whitespace()
+        .find(|s| s.contains('/') && s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))?
+        .to_string();
+    let (ip_str, prefix_str) = cidr.split_once('/')?;
+    let ip: Ipv4Addr = ip_str.parse().ok()?;
+    let prefix: u32 = prefix_str.parse().ok()?;
+    let mask = if prefix == 0 { 0u32 } else { !0u32 << (32 - prefix) };
+    let net_addr = Ipv4Addr::from(u32::from(ip) & mask);
+    let subnet = format!("{}/{}", net_addr, prefix);
+
+    Some((iface, subnet, gateway))
 }
 
 fn create_fifo(path: &Path) -> std::io::Result<()> {
     match mkfifo(path, Mode::from_bits_truncate(0o600)) {
-        Ok(()) => Ok(()),
-        Err(Errno::EEXIST) => Ok(()),
+        Ok(()) => Ok(()), Err(Errno::EEXIST) => Ok(()),
         Err(err) => Err(std::io::Error::other(err)),
     }
 }
 
-fn add_readonly_mount(cmd: &mut Command, host_path: &str, container_path: &str) {
-    if Path::new(host_path).exists() {
-        cmd.arg("-v")
-            .arg(format!("{}:{}:ro", host_path, container_path));
+fn open_fifo_rdwr(path: &Path) -> AgentResult<File> {
+    let file = std::fs::OpenOptions::new().read(true).write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(path)
+        .map_err(|e| AgentError::ContainerError(format!("open FIFO: {}", e)))?;
+    if let Ok(flags) = fcntl(&file, FcntlArg::F_GETFL) {
+        let mut of = OFlag::from_bits_truncate(flags); of.remove(OFlag::O_NONBLOCK);
+        let _ = fcntl(&file, FcntlArg::F_SETFL(of));
     }
+    Ok(file)
 }
 
-fn shell_quote(input: &str) -> String {
-    if input.is_empty() {
-        "''".to_string()
-    } else if input.contains('\'') {
-        format!("'{}'", input.replace('\'', "'\\''"))
-    } else {
-        format!("'{}'", input)
-    }
+fn set_dir_perms(path: &Path, mode: u32) {
+    if let Ok(md) = fs::metadata(path) { let mut p = md.permissions(); p.set_mode(mode); fs::set_permissions(path, p).ok(); }
 }
 
-impl ContainerdRuntime {
-    async fn create_entrypoint_script(&self, dir: &str, contents: &str) -> AgentResult<()> {
-        let path = PathBuf::from(dir).join("catalyst-entrypoint");
-        let mut file = tokio::fs::File::create(&path).await?;
-        use tokio::io::AsyncWriteExt;
-        file.write_all(contents.as_bytes()).await?;
-        let mut perms = tokio::fs::metadata(&path).await?.permissions();
-        perms.set_mode(0o755);
-        tokio::fs::set_permissions(&path, perms).await?;
-        Ok(())
-    }
-
-    async fn resolve_host_ports(
-        &self,
-        container_id: &str,
-        container_port: u16,
-    ) -> AgentResult<Vec<u16>> {
-        let output = Command::new("nerdctl")
-            .arg("--namespace")
-            .arg(&self.namespace)
-            .arg("port")
-            .arg(container_id)
-            .arg(container_port.to_string())
-            .output()
-            .await?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-        let mut ports = Vec::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some((_host, port)) = line.rsplit_once(':') {
-                if let Ok(port) = port.trim().parse::<u16>() {
-                    ports.push(port);
-                }
-            }
-        }
-        Ok(ports)
-    }
+fn grpc_err(e: tonic::Status) -> AgentError {
+    AgentError::ContainerError(format!("containerd gRPC error ({}): {}", e.code(), e.message()))
 }
 
-#[derive(serde::Deserialize, Debug)]
-pub struct ContainerInfo {
-    #[serde(rename = "ID")]
-    pub id: String,
-    #[serde(rename = "Names")]
-    pub names: String,
-    #[serde(rename = "Status")]
-    pub status: String,
-    #[serde(rename = "Command", default)]
-    pub command: String,
-    #[serde(rename = "Image", default)]
-    pub image: String,
+fn is_not_found(e: &tonic::Status) -> bool {
+    e.message().contains("not found") || e.message().contains("process already finished") || e.code() == tonic::Code::NotFound
 }
 
-#[derive(serde::Deserialize, Debug)]
-pub struct ContainerStats {
-    #[serde(rename = "ID")]
-    pub container_id: String,
-    #[serde(rename = "Name")]
-    pub container_name: String,
-    #[serde(rename = "CPUPerc")]
-    pub cpu_percent: String,
-    #[serde(rename = "MemUsage")]
-    pub memory_usage: String,
-    #[serde(rename = "NetIO")]
-    pub net_io: String,
-    #[serde(rename = "BlockIO")]
-    pub block_io: String,
+fn base_mounts(data_dir: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({"destination":"/data","type":"bind","source":data_dir,"options":["rbind","rw"]}),
+        serde_json::json!({"destination":"/proc","type":"proc","source":"proc"}),
+        serde_json::json!({"destination":"/dev","type":"tmpfs","source":"tmpfs","options":["nosuid","strictatime","mode=755","size=65536k"]}),
+        serde_json::json!({"destination":"/dev/pts","type":"devpts","source":"devpts","options":["nosuid","noexec","newinstance","ptmxmode=0666","mode=0620","gid=5"]}),
+        serde_json::json!({"destination":"/dev/shm","type":"tmpfs","source":"shm","options":["nosuid","noexec","nodev","mode=1777","size=65536k"]}),
+        serde_json::json!({"destination":"/dev/mqueue","type":"mqueue","source":"mqueue","options":["nosuid","noexec","nodev"]}),
+        serde_json::json!({"destination":"/sys","type":"sysfs","source":"sysfs","options":["nosuid","noexec","nodev","ro"]}),
+        serde_json::json!({"destination":"/sys/fs/cgroup","type":"cgroup","source":"cgroup","options":["nosuid","noexec","nodev","relatime","ro"]}),
+    ]
+}
+
+fn masked_paths() -> Vec<&'static str> { vec!["/proc/kcore","/proc/latency_stats","/proc/timer_list","/proc/timer_stats","/proc/sched_debug","/sys/firmware"] }
+fn readonly_paths() -> Vec<&'static str> { vec!["/proc/asound","/proc/bus","/proc/fs","/proc/irq","/proc/sys","/proc/sysrq-trigger"] }
+
+fn find_container_cgroup(container_id: &str) -> Option<String> { find_cgroup_recursive("/sys/fs/cgroup", container_id) }
+fn find_cgroup_recursive(dir: &str, cid: &str) -> Option<String> {
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let p = entry.path(); let n = entry.file_name().to_string_lossy().to_string();
+        if n.contains(cid) && p.is_dir() { return Some(p.to_string_lossy().to_string()); }
+        if p.is_dir() && !n.starts_with('.') { if let Some(f) = find_cgroup_recursive(&p.to_string_lossy(), cid) { return Some(f); } }
+    }
+    None
+}
+
+async fn read_cgroup_cpu_percent(path: &str) -> Option<f64> {
+    let content = tokio::fs::read_to_string(format!("{}/cpu.stat", path)).await.ok()?;
+    for line in content.lines() {
+        if line.starts_with("usage_usec") { return line.split_whitespace().nth(1)?.parse::<u64>().ok().map(|u| u as f64 / 1_000_000.0); }
+    }
+    Some(0.0)
+}
+
+async fn read_cgroup_memory(path: &str) -> Option<u64> {
+    tokio::fs::read_to_string(format!("{}/memory.current", path)).await.ok()?.trim().parse().ok()
 }

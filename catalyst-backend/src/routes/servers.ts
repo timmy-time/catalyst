@@ -5506,6 +5506,13 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(500).send({ error: "WebSocket gateway not available" });
       }
 
+      // Update server status BEFORE sending to agent to avoid race condition
+      // where agent reports "stopped" before DB reflects "stopping"
+      await prisma.server.update({
+        where: { id: serverId },
+        data: { status: "stopping" },
+      });
+
       const success = await gateway.sendToAgent(server.nodeId, {
         type: "stop_server",
         serverId: server.id,
@@ -5514,14 +5521,13 @@ export async function serverRoutes(app: FastifyInstance) {
       });
 
       if (!success) {
+        // Revert status since agent didn't receive the command
+        await prisma.server.update({
+          where: { id: serverId },
+          data: { status: server.status },
+        });
         return reply.status(503).send({ error: "Failed to send command to agent" });
       }
-
-      // Update server status
-      await prisma.server.update({
-        where: { id: serverId },
-        data: { status: "stopping" },
-      });
 
       reply.send({ success: true, message: "Stop command sent to agent" });
     }
@@ -5592,15 +5598,15 @@ export async function serverRoutes(app: FastifyInstance) {
 
       // If running, stop first
       if (currentState === ServerState.RUNNING) {
+        await prisma.server.update({
+          where: { id: serverId },
+          data: { status: "stopping" },
+        });
         await gateway.sendToAgent(server.nodeId, {
           type: "stop_server",
           serverId: server.id,
           serverUuid: server.uuid,
           template: runtimeTemplate,
-        });
-        await prisma.server.update({
-          where: { id: serverId },
-          data: { status: "stopping" },
         });
       }
 
@@ -6488,6 +6494,17 @@ export async function serverRoutes(app: FastifyInstance) {
         return reply.status(409).send({ error: "Server is already suspended" });
       }
 
+      // Update DB BEFORE sending stop command to avoid race condition
+      const updated = await prisma.server.update({
+        where: { id: serverId },
+        data: {
+          status: "suspended",
+          suspendedAt: new Date(),
+          suspendedByUserId: userId,
+          suspensionReason: reason?.trim() || null,
+        },
+      });
+
       if (server.status === "running" || server.status === "starting") {
         const gateway = (app as any).wsGateway;
         if (!gateway) {
@@ -6502,16 +6519,6 @@ export async function serverRoutes(app: FastifyInstance) {
           serverUuid: server.uuid,
         });
       }
-
-      const updated = await prisma.server.update({
-        where: { id: serverId },
-        data: {
-          status: "suspended",
-          suspendedAt: new Date(),
-          suspendedByUserId: userId,
-          suspensionReason: reason?.trim() || null,
-        },
-      });
 
       await prisma.auditLog.create({
         data: {

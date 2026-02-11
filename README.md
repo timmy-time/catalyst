@@ -110,7 +110,7 @@ Web-based file editor, SFTP access (port 2022), upload/download with path valida
 │  (Tokio)     │                    │              │
 └──────────────┘                    └──────────────┘
        │
-       │ containerd/nerdctl
+       │ containerd gRPC
        ▼
 ┌──────────────┐
 │   Game       │
@@ -122,7 +122,7 @@ Web-based file editor, SFTP access (port 2022), upload/download with path valida
 
 - **Backend:** TypeScript 5.9, Fastify, PostgreSQL, WebSocket Gateway
 - **Frontend:** React 18, Vite, TanStack Query, Radix UI
-- **Agent:** Rust 1.70, Tokio, containerd/nerdctl
+- **Agent:** Rust 1.70, Tokio, containerd gRPC
 - **Features:** RBAC, SFTP, Plugin System, Task Scheduling, Alerts
 
 👉 [Full architecture details](docs/ARCHITECTURE.md)

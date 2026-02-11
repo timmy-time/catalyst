@@ -327,8 +327,8 @@ run_dependency_install() {
     NODE_IMAGE="node:20-bookworm-slim"
   fi
 
-  if command -v nerdctl >/dev/null 2>&1; then
-    nerdctl run --rm -v "{{SERVER_DIR}}:/data" -w /data "$NODE_IMAGE" sh -lc "$INSTALL_CMD"
+  if command -v ctr >/dev/null 2>&1; then
+    ctr run --rm --mount type=bind,src="{{SERVER_DIR}}",dst=/data,options=rbind:rw "$NODE_IMAGE" catalyst-npm-install sh -lc "cd /data && $INSTALL_CMD"
     return
   fi
 
@@ -342,7 +342,7 @@ run_dependency_install() {
     return
   fi
 
-  echo '[Catalyst] ERROR: npm not found and no container runtime (nerdctl/docker/podman) is available.'
+  echo '[Catalyst] ERROR: npm not found and no container runtime (ctr/docker/podman) is available.'
   exit 1
 }
 

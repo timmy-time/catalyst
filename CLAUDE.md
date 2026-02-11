@@ -8,7 +8,7 @@ Catalyst is a production-grade game server management platform built as a three-
 
 - **Backend** (`catalyst-backend/`) - TypeScript 5.9, Fastify, PostgreSQL, WebSocket gateway
 - **Frontend** (`catalyst-frontend/`) - React 18, Vite, TanStack Query, Radix UI
-- **Agent** (`catalyst-agent/`) - Rust 1.70, Tokio, containerd/nerdctl for container management
+- **Agent** (`catalyst-agent/`) - Rust 1.70, Tokio, containerd gRPC for container management
 - **Shared** (`catalyst-shared/`) - TypeScript type definitions synced across services
 
 ## Development Commands
@@ -66,7 +66,7 @@ cd tests && ./run-all-tests.sh  # Full E2E test suite
 1. **Backend owns all state** - Database is source of truth; never trust agent-reported data without validation
 2. **Validate first, execute second** - Backend validates all state transitions before sending commands to agents
 3. **WebSocket as primary communication** - Used for real-time communication between backend, agents, and clients
-4. **containerd over Docker** - Agent uses containerd/nerdctl for container management (not Docker daemon)
+4. **containerd over Docker** - Agent uses containerd gRPC API directly for container management (not Docker daemon)
 5. **State machine for server lifecycle** - All server state transitions validated via `ServerStateMachine`
 
 ## Key Data Flow Patterns
