@@ -1,37 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# SeaweedFS containerd launcher script
+# This script sets up and runs SeaweedFS using containerd directly
+# For automatic restart on boot, install the systemd service
+
 CONTAINER_NAME=${CONTAINER_NAME:-catalyst-seaweedfs}
-IMAGE=${IMAGE:-chrislusf/seaweedfs:latest}
+SEAWED_IMAGE=${SEAWED_IMAGE:-docker.io/chrislusf/seaweedfs:latest}
 S3_PORT=${S3_PORT:-8333}
 MASTER_PORT=${MASTER_PORT:-9333}
 VOLUME_PORT=${VOLUME_PORT:-8080}
 FILER_PORT=${FILER_PORT:-8888}
 DATA_DIR=${DATA_DIR:-/var/lib/catalyst/seaweedfs}
+NAMESPACE=${NAMESPACE:-catalyst}
 
-# Optional: set S3 access/secret keys if the image supports them
-# S3_ACCESS_KEY and S3_SECRET_KEY are provided for documentation; behaviour depends on image flags
-S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
-S3_SECRET_KEY=${S3_SECRET_KEY:-}
+# Runtime configuration
+RUNTIME=${RUNTIME:-io.containerd.runc.v2}
+SNAPSHOTTER=${SNAPSHOTTER:-overlayfs}
+CTR_NAMESPACE=${CTR_NAMESPACE:-catalyst}
 
-if ! command -v nerdctl >/dev/null 2>&1; then
-  echo "nerdctl is required but not installed" >&2
+# Check for ctr command
+if ! command -v ctr >/dev/null 2>&1; then
+  echo "ctr (containerd CLI) is required but not installed" >&2
   exit 1
 fi
 
+# Ensure data directory exists
 mkdir -p "$DATA_DIR"
 
-if nerdctl ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
-  echo "Container '$CONTAINER_NAME' already exists."
-  echo "Use: nerdctl start $CONTAINER_NAME"
-  exit 0
-fi
+# Function to check if task is running
+task_running() {
+  ctr -n "$CTR_NAMESPACE" task ls 2>/dev/null | grep -q "^${CONTAINER_NAME}.*RUNNING"
+}
 
-# Run SeaweedFS single-node with master, volume, filer and S3 gateway
-# NOTE: Seaweed's command-line flags and S3 authentication options may vary by image version.
-# Adjust flags as needed for your environment (or consult the upstream image docs).
+# Function to pull image
+pull_image() {
+  local image="$1"
+  echo "Pulling image: $image"
+  if ! ctr -n "$CTR_NAMESPACE" images pull "$image" 2>/dev/null; then
+    echo "Failed to pull image: $image" >&2
+    exit 1
+  fi
+}
 
-# Helper: check whether a host TCP port is free (works with ss or netstat)
+# Helper: check whether a host TCP port is free
 is_port_free() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -39,7 +51,6 @@ is_port_free() {
   elif command -v netstat >/dev/null 2>&1; then
     netstat -tln | awk '{print $4}' | grep -qE "(:|\[)${port}$" && return 1 || return 0
   else
-    # conservative: say it's used if we can't check
     return 1
   fi
 }
@@ -57,29 +68,52 @@ find_free_port() {
   return 1
 }
 
-# Pick host ports (try defaults then scan up to +100)
-HOST_MASTER_PORT=$(find_free_port "$MASTER_PORT" $((MASTER_PORT + 100))) || { echo "No free host port for master around $MASTER_PORT"; exit 1; }
-HOST_VOLUME_PORT=$(find_free_port "$VOLUME_PORT" $((VOLUME_PORT + 100))) || { echo "No free host port for volume around $VOLUME_PORT"; exit 1; }
-HOST_FILER_PORT=$(find_free_port "$FILER_PORT" $((FILER_PORT + 100))) || { echo "No free host port for filer around $FILER_PORT"; exit 1; }
-HOST_S3_PORT=$(find_free_port "$S3_PORT" $((S3_PORT + 100))) || { echo "No free host port for s3 around $S3_PORT"; exit 1; }
+# Function to create and start container
+start_container() {
+  local image="$1"
 
-echo "Using host port mapping: master ${HOST_MASTER_PORT}->9333, volume ${HOST_VOLUME_PORT}->8080, filer ${HOST_FILER_PORT}->8888, s3 ${HOST_S3_PORT}->8333"
+  # Pull and unpack image
+  pull_image "$image"
 
-nerdctl run -d \
-  --name "$CONTAINER_NAME" \
-  -p "${HOST_MASTER_PORT}:9333" \
-  -p "${HOST_VOLUME_PORT}:8080" \
-  -p "${HOST_FILER_PORT}:8888" \
-  -p "${HOST_S3_PORT}:8333" \
-  -v "${DATA_DIR}:/data" \
-  --restart always \
-  "$IMAGE" server -dir=/data -ip=0.0.0.0 -master.port=9333 -volume.port=8080 -filer -filer.port=8888 -s3 -s3.port=8333
+  # Remove old container if exists
+  if ctr -n "$CTR_NAMESPACE" containers ls 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+    echo "Removing old container $CONTAINER_NAME"
+    ctr -n "$CTR_NAMESPACE" containers rm "$CONTAINER_NAME" || true
+  fi
 
-echo "SeaweedFS started as '$CONTAINER_NAME' with S3 gateway at http://localhost:${HOST_S3_PORT} (S3)."
-echo "Filer UI (if enabled) at http://localhost:${HOST_FILER_PORT}" 
+  echo "Starting SeaweedFS container '$CONTAINER_NAME'..."
 
-echo "Notes:"
-echo " - To use as an S3 endpoint with 'mc' or AWS CLI, point the endpoint to http://localhost:${HOST_S3_PORT}."
-echo " - SeaweedFS S3 auth behaviour may differ by image; for local dev it may be unauthenticated."
-echo " - If you need MinIO-compatible authentication, configure the S3 gateway with appropriate access/secret keys or put a proxy in front of it."
-echo " - To migrate data from MinIO: use 'mc' or aws-cli to copy buckets from MinIO S3 endpoint to the Seaweed S3 endpoint."
+  # Create and run container with all components (master, volume, filer, S3)
+  ctr -n "$CTR_NAMESPACE" run \
+    --rm \
+    --runtime "$RUNTIME" \
+    --snapshotter "$SNAPSHOTTER" \
+    --net-host \
+    --mount type=bind,src="$DATA_DIR",dst=/data,options=rw \
+    -d \
+    "$image" "$CONTAINER_NAME" \
+    server -dir=/data -ip=0.0.0.0 -master.port="$MASTER_PORT" -volume.port="$VOLUME_PORT" -filer -filer.port="$FILER_PORT" -s3 -s3.port="$S3_PORT"
+}
+
+# Main execution
+if task_running; then
+  echo "Container '$CONTAINER_NAME' is already running."
+  exit 0
+fi
+
+start_container "$SEAWED_IMAGE"
+
+echo "SeaweedFS started as '$CONTAINER_NAME'"
+echo "S3 gateway: http://localhost:${S3_PORT}"
+echo "Master: http://localhost:${MASTER_PORT}"
+echo "Volume: http://localhost:${VOLUME_PORT}"
+echo "Filer: http://localhost:${FILER_PORT}"
+echo "Data directory: ${DATA_DIR}"
+echo ""
+echo "To view logs: ctr -n ${CTR_NAMESPACE} tasks logs ${CONTAINER_NAME}"
+echo "To stop: ctr -n ${CTR_NAMESPACE} task kill ${CONTAINER_NAME}"
+echo ""
+echo "For automatic restart on boot, install the systemd service:"
+echo "  sudo cp containerd/catalyst-seaweedfs.service /etc/systemd/system/"
+echo "  sudo systemctl daemon-reload"
+echo "  sudo systemctl enable catalyst-seaweedfs"
