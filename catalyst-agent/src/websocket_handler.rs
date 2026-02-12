@@ -312,6 +312,14 @@ impl WebSocketHandler {
                 let container_id = self.resolve_container_id(server_id, server_uuid).await;
                 self.stop_server(server_id, container_id).await?;
             }
+            Some("kill_server") => {
+                let server_uuid = msg["serverUuid"]
+                    .as_str()
+                    .ok_or_else(|| AgentError::InvalidRequest("Missing serverUuid".to_string()))?;
+                let server_id = msg["serverId"].as_str().unwrap_or(server_uuid);
+                let container_id = self.resolve_container_id(server_id, server_uuid).await;
+                self.kill_server(server_id, container_id).await?;
+            }
             Some("restart_server") => {
                 let server_uuid = msg["serverUuid"]
                     .as_str()

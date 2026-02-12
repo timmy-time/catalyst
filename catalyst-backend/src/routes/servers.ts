@@ -5443,6 +5443,86 @@ export async function serverRoutes(app: FastifyInstance) {
     }
   );
 
+  // Kill server (force stop command to agent)
+  app.post(
+    "/:serverId/kill",
+    { onRequest: [app.authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { serverId } = request.params as { serverId: string };
+      const userId = request.user.userId;
+
+      const server = await prisma.server.findUnique({
+        where: { id: serverId },
+        include: {
+          node: true,
+          template: true,
+        },
+      });
+
+      if (!server) {
+        return reply.status(404).send({ error: "Server not found" });
+      }
+
+      if (!ensureNotSuspended(server, reply)) {
+        return;
+      }
+
+      if (server.ownerId !== userId && !(await isAdminUser(userId, "admin.read"))) {
+        const access = await prisma.serverAccess.findFirst({
+          where: {
+            userId,
+            serverId,
+            permissions: { has: "server.stop" },
+          },
+        });
+        const hasNodeAccessToServer = await hasNodeAccess(prisma, userId, server.nodeId);
+        if (!access && !hasNodeAccessToServer) {
+          return reply.status(403).send({ error: "Forbidden" });
+        }
+      }
+
+      const currentState = server.status as ServerState;
+      const canKill =
+        ServerStateMachine.canStop(currentState) || currentState === ServerState.STOPPING;
+      if (!canKill) {
+        return reply.status(409).send({
+          error: `Cannot kill server in ${server.status} state. Server must be running, starting, or stopping.`,
+        });
+      }
+
+      if (!server.node.isOnline) {
+        return reply.status(503).send({ error: "Node is offline" });
+      }
+
+      const gateway = (app as any).wsGateway;
+      if (!gateway) {
+        return reply.status(500).send({ error: "WebSocket gateway not available" });
+      }
+
+      await prisma.server.update({
+        where: { id: serverId },
+        data: { status: "stopping" },
+      });
+
+      const success = await gateway.sendToAgent(server.nodeId, {
+        type: "kill_server",
+        serverId: server.id,
+        serverUuid: server.uuid,
+        template: patchTemplateForRuntime(server.template),
+      });
+
+      if (!success) {
+        await prisma.server.update({
+          where: { id: serverId },
+          data: { status: server.status },
+        });
+        return reply.status(503).send({ error: "Failed to send command to agent" });
+      }
+
+      reply.send({ success: true, message: "Kill command sent to agent" });
+    }
+  );
+
   // Restart server (stop then start)
   app.post(
     "/:serverId/restart",

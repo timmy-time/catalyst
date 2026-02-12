@@ -753,7 +753,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
       const { serverIds, action, reason } = request.body as {
         serverIds?: string[];
-        action?: 'start' | 'stop' | 'restart' | 'suspend' | 'unsuspend' | 'delete';
+        action?: 'start' | 'stop' | 'kill' | 'restart' | 'suspend' | 'unsuspend' | 'delete';
         reason?: string;
       };
 
@@ -765,6 +765,7 @@ export async function adminRoutes(app: FastifyInstance) {
       const actionPermissions: Record<string, string> = {
         start: 'server.start',
         stop: 'server.stop',
+        kill: 'server.stop',
         restart: 'server.start',
         suspend: 'server.suspend',
         unsuspend: 'server.suspend',
@@ -785,7 +786,7 @@ export async function adminRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'serverIds are required' });
       }
 
-      const allowedActions = new Set(['start', 'stop', 'restart', 'suspend', 'unsuspend', 'delete']);
+      const allowedActions = new Set(['start', 'stop', 'kill', 'restart', 'suspend', 'unsuspend', 'delete']);
       if (!action || !allowedActions.has(action)) {
         return reply.status(400).send({ error: 'Invalid action' });
       }
@@ -907,6 +908,44 @@ export async function adminRoutes(app: FastifyInstance) {
                   resource: 'server',
                   resourceId: server.id,
                   details: {},
+                },
+              });
+              return { serverId: server.id, status: 'success' };
+            }
+
+            if (action === 'kill') {
+              const canKill =
+                ServerStateMachine.canStop(server.status as ServerState) ||
+                server.status === ServerState.STOPPING;
+              if (!canKill) {
+                return { serverId: server.id, status: 'skipped', error: 'Invalid server state' };
+              }
+              if (!server.node?.isOnline) {
+                return { serverId: server.id, status: 'skipped', error: 'Node is offline' };
+              }
+              if (!gateway) {
+                return { serverId: server.id, status: 'failed', error: 'WebSocket gateway not available' };
+              }
+              const success = await gateway.sendToAgent(server.nodeId, {
+                type: 'kill_server',
+                serverId: server.id,
+                serverUuid: server.uuid,
+                template: server.template,
+              });
+              if (!success) {
+                return { serverId: server.id, status: 'failed', error: 'Failed to send command to agent' };
+              }
+              await prisma.server.update({
+                where: { id: server.id },
+                data: { status: 'stopping' },
+              });
+              await prisma.auditLog.create({
+                data: {
+                  userId: user.userId,
+                  action: 'server.stop',
+                  resource: 'server',
+                  resourceId: server.id,
+                  details: { force: true },
                 },
               });
               return { serverId: server.id, status: 'success' };

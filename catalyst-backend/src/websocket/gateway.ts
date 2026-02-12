@@ -493,6 +493,10 @@ export class WebSocketGateway {
         return;
       }
       if (message.type === "node_handshake") {
+        if (agent.authenticated) {
+          this.logger.debug({ nodeId }, "Ignoring redundant node_handshake for authenticated agent");
+          return;
+        }
         this.logger.info({ nodeId, hasToken: Boolean(message.token) }, "Received node_handshake from agent");
         const tokenValue = typeof message.token === "string" ? message.token : "";
         const authResult = await this.authenticateAgentToken(nodeId, tokenValue);
@@ -500,12 +504,12 @@ export class WebSocketGateway {
           { nodeId, tokenProvided: Boolean(tokenValue), authType: authResult?.authType },
           "Agent auth check",
         );
-        if (!agent || !authResult) {
+        if (!authResult) {
           this.logger.warn(
-            { nodeId, agent: Boolean(agent), token: Boolean(tokenValue) },
+            { nodeId, token: Boolean(tokenValue) },
             `Agent authentication failed for node: ${nodeId}`,
           );
-          agent?.socket.close();
+          agent.socket.close();
           this.agents.delete(nodeId);
           return;
         }
@@ -1555,6 +1559,7 @@ export class WebSocketGateway {
           agent.socket.send(
             JSON.stringify({
               ...event,
+              serverUuid: server.uuid,
               suspended: Boolean(server.suspendedAt),
             })
           );

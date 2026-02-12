@@ -75,7 +75,7 @@ function ServerControls({ serverId, status }: Props) {
       </button>
       <button
         className="rounded-md bg-rose-600 px-3 py-1 font-semibold text-white shadow-lg shadow-rose-500/20 transition-all duration-300 hover:bg-rose-500 disabled:opacity-60"
-        disabled={kill.isPending || isSuspended}
+        disabled={kill.isPending || isSuspended || status === 'stopped'}
         onClick={() => kill.mutate()}
       >
         Kill

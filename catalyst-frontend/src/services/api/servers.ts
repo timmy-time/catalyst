@@ -64,8 +64,7 @@ export const serversApi = {
     return data;
   },
   kill: async (id: string) => {
-    // Note: Backend doesn't have a /kill endpoint, using stop instead
-    const { data } = await apiClient.post<ApiResponse<void>>(`/api/servers/${id}/stop`);
+    const { data } = await apiClient.post<ApiResponse<void>>(`/api/servers/${id}/kill`);
     return data;
   },
   install: async (id: string) => {
