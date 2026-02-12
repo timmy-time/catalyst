@@ -28,3 +28,7 @@ tests/lib/node_modules/
 .actrc
 docs/testing-ci-locally.md
 api-1.json
+catalyst-agent/config.toml
+catalyst-agent/config-e2e.toml
+catalyst-agent/SECURITY_ADVISOR.md
+.kilocode/setup-script
