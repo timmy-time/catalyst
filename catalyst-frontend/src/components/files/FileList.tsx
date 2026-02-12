@@ -36,7 +36,15 @@ type Props = {
 const isArchive = (name: string) =>
   name.endsWith('.tar.gz') || name.endsWith('.tgz') || name.endsWith('.zip');
 
-function SortIndicator({ field, active, direction }: { field: SortField; active: SortField; direction: SortDirection }) {
+function SortIndicator({
+  field,
+  active,
+  direction,
+}: {
+  field: SortField;
+  active: SortField;
+  direction: SortDirection;
+}) {
   if (field !== active) return null;
   return direction === 'asc' ? (
     <ArrowUp className="inline h-3 w-3" />
@@ -113,7 +121,9 @@ function FileList({
   onPermissions,
 }: Props) {
   const [contextMenuEntry, setContextMenuEntry] = useState<FileEntry | null>(null);
-  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!contextMenuPosition) return undefined;
@@ -121,7 +131,9 @@ function FileList({
       setContextMenuPosition(null);
       setContextMenuEntry(null);
     };
-    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismiss();
+    };
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       const t = (e.target as HTMLElement)?.closest('[data-file-context-menu="true"]');
       if (!t) dismiss();
@@ -130,9 +142,13 @@ function FileList({
     window.addEventListener('scroll', dismiss, true);
     window.addEventListener('mousedown', handlePointerDown, true);
     window.addEventListener('touchstart', handlePointerDown, true);
-    window.addEventListener('contextmenu', (e) => {
-      if (!(e.target as HTMLElement)?.closest('[data-file-context-menu="true"]')) dismiss();
-    }, true);
+    window.addEventListener(
+      'contextmenu',
+      (e) => {
+        if (!(e.target as HTMLElement)?.closest('[data-file-context-menu="true"]')) dismiss();
+      },
+      true,
+    );
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('scroll', dismiss, true);
@@ -163,7 +179,9 @@ function FileList({
   }
 
   if (!files.length) {
-    return <EmptyState title="No files here" description="Upload or create a file to get started." />;
+    return (
+      <EmptyState title="No files here" description="Upload or create a file to get started." />
+    );
   }
 
   const thClass =
@@ -192,7 +210,8 @@ function FileList({
               Size <SortIndicator field="size" active={sortField} direction={sortDirection} />
             </th>
             <th className={`${thClass} w-40`} onClick={() => onSort('modified')}>
-              Modified <SortIndicator field="modified" active={sortField} direction={sortDirection} />
+              Modified{' '}
+              <SortIndicator field="modified" active={sortField} direction={sortDirection} />
             </th>
             <th className="w-10 px-3 py-2.5" />
           </tr>
@@ -237,7 +256,10 @@ function FileList({
                   <button
                     type="button"
                     className="flex items-center gap-2 text-left"
-                    onClick={() => onOpen(entry)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpen(entry);
+                    }}
                   >
                     {entry.isDirectory ? (
                       <Folder className="h-4 w-4 shrink-0 text-primary-500" />

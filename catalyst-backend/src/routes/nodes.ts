@@ -2,11 +2,12 @@ import { prisma } from '../db.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
-import { randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes } from "crypto";
 import { listAvailableIps, summarizePool } from "../utils/ipam";
 import { Prisma } from "@prisma/client";
 import { auth } from "../auth";
 import { serialize } from '../utils/serialize';
+import { verifyAgentApiKey } from "../lib/agent-auth";
 
 import {
   hasPermission,
@@ -306,7 +307,7 @@ export async function nodeRoutes(app: FastifyInstance) {
       });
 
       const deployUrl = `${process.env.BACKEND_URL || "http://localhost:3000"}/api/deploy/${token}`;
-      let apiKey: string | null = null;
+      let apiKey = "";
       try {
         const apiKeyResponse = await auth.api.createApiKey({
           body: {
@@ -320,20 +321,21 @@ export async function nodeRoutes(app: FastifyInstance) {
             },
           },
         } as any);
-        apiKey = (apiKeyResponse as any)?.key ?? null;
+        apiKey = (apiKeyResponse as any)?.key ?? "";
         if (!apiKey) {
-          request.log.warn({ nodeId }, "Failed to create agent API key for deployment");
+          request.log.error({ nodeId }, "Failed to create agent API key for deployment");
+          return reply.status(500).send({ error: "Failed to create agent API key" });
         }
       } catch (error) {
         request.log.error({ error, nodeId }, "Failed to create agent API key for deployment");
+        return reply.status(500).send({ error: "Failed to create agent API key" });
       }
 
       reply.send({
         success: true,
         data: {
           deploymentToken: deploymentToken.token,
-          secret: deploymentToken.secret,
-          apiKey: apiKey ?? null,
+          apiKey,
           deployUrl,
           expiresAt,
         },
@@ -630,8 +632,7 @@ export async function nodeRoutes(app: FastifyInstance) {
     { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { nodeId } = request.params as { nodeId: string };
-      const { secret, health } = request.body as {
-        secret: string;
+      const { health } = request.body as {
         health: {
           cpuPercent: number;
           memoryUsageMb: number;
@@ -642,7 +643,26 @@ export async function nodeRoutes(app: FastifyInstance) {
         };
       };
 
-      if (!secret) {
+      const headerApiKey =
+        typeof request.headers["x-node-api-key"] === "string"
+          ? request.headers["x-node-api-key"].trim()
+          : typeof request.headers["x-catalyst-node-token"] === "string"
+            ? request.headers["x-catalyst-node-token"].trim()
+            : "";
+      const authHeader =
+        typeof request.headers.authorization === "string"
+          ? request.headers.authorization.trim()
+          : "";
+      const bearerApiKey =
+        authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+      const apiKey = headerApiKey || bearerApiKey;
+
+      if (!apiKey) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const apiKeyValid = await verifyAgentApiKey(prisma, nodeId, apiKey);
+      if (!apiKeyValid) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
 
@@ -650,11 +670,7 @@ export async function nodeRoutes(app: FastifyInstance) {
         where: { id: nodeId },
       });
 
-      if (
-        !node ||
-        secret.length !== node.secret.length ||
-        !timingSafeEqual(Buffer.from(secret), Buffer.from(node.secret))
-      ) {
+      if (!node) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
 

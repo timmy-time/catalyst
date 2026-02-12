@@ -2,7 +2,6 @@ import "dotenv/config";
 import Fastify from "fastify";
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
 import fastifyWebsocket from "@fastify/websocket";
 import fastifyCors from "@fastify/cors";
 import fastifyRateLimit from "@fastify/rate-limit";
@@ -38,6 +37,7 @@ import { PluginLoader } from "./plugins/loader";
 import { pluginRoutes } from "./routes/plugins";
 import { FileTunnelService } from "./services/file-tunnel";
 import { fileTunnelRoutes } from "./routes/file-tunnel";
+import { verifyAgentApiKey } from "./lib/agent-auth";
 
 const logger = pino(
   process.env.NODE_ENV === "production"
@@ -325,15 +325,15 @@ async function bootstrap() {
         const headerToken =
           typeof request.headers["x-catalyst-node-token"] === "string"
             ? request.headers["x-catalyst-node-token"]
+            : typeof request.headers["x-node-api-key"] === "string"
+              ? request.headers["x-node-api-key"]
             : null;
         const nodeId = headerNodeId ?? (typeof query.nodeId === "string" ? query.nodeId : null);
         const token = headerToken ?? (typeof query.token === "string" ? query.token : null);
         if (!nodeId || !token) {
           return false;
         }
-        const node = await prisma.node.findUnique({ where: { id: nodeId as string } });
-        if (!node || token.length !== node.secret.length) return false;
-        return crypto.timingSafeEqual(Buffer.from(node.secret), Buffer.from(token));
+        return verifyAgentApiKey(prisma, nodeId as string, token);
       },
       skipOnError: false,
     });
@@ -590,14 +590,23 @@ async function bootstrap() {
         return reply.status(401).send({ error: "Invalid or expired token" });
       }
 
+      const apiKeyValue = typeof apiKey === "string" ? apiKey.trim() : "";
+      if (!apiKeyValue) {
+        return reply.status(400).send({ error: "Missing apiKey query parameter" });
+      }
+
+      const apiKeyValid = await verifyAgentApiKey(prisma, deployToken.node.id, apiKeyValue);
+      if (!apiKeyValid) {
+        return reply.status(401).send({ error: "Invalid API key for this node" });
+      }
+
       const baseUrl =
         process.env.BACKEND_URL || `${request.protocol}://${request.headers.host}`;
       const script = generateDeploymentScript(
         baseUrl,
         deployToken.node.id,
-        deployToken.node.secret,
         deployToken.node.hostname,
-        typeof apiKey === "string" ? apiKey : null,
+        apiKeyValue,
       );
 
       reply.type("text/plain").send(script);
@@ -707,12 +716,10 @@ async function bootstrap() {
 function generateDeploymentScript(
   backendUrl: string,
   nodeId: string,
-  secret: string,
   hostName: string,
-  apiKey: string | null,
+  apiKey: string,
 ): string {
   const shellEscape = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
-  const safeApiKey = apiKey ?? "";
 
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -727,8 +734,7 @@ BACKEND_HTTP_URL="\${BACKEND_HTTP_URL%/ws}"
 BACKEND_HTTP_URL="\${BACKEND_HTTP_URL%/}"
 
 NODE_ID=${shellEscape(nodeId)}
-NODE_SECRET=${shellEscape(secret)}
-NODE_API_KEY=${shellEscape(safeApiKey)}
+NODE_API_KEY=${shellEscape(apiKey)}
 NODE_HOSTNAME=${shellEscape(hostName)}
 
 DEPLOY_SCRIPT_URL="\${BACKEND_HTTP_URL}/api/agent/deploy-script"
@@ -744,7 +750,7 @@ curl -fsSL "\${DEPLOY_SCRIPT_URL}" -o "$TMP_SCRIPT"
 chmod +x "$TMP_SCRIPT"
 
 echo "Running deploy script..."
-"$TMP_SCRIPT" "$BACKEND_HTTP_URL" "$NODE_ID" "$NODE_SECRET" "$NODE_API_KEY" "$NODE_HOSTNAME"
+"$TMP_SCRIPT" "$BACKEND_HTTP_URL" "$NODE_ID" "$NODE_API_KEY" "$NODE_HOSTNAME"
 `;
 }
 

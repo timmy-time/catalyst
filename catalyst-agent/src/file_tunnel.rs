@@ -85,6 +85,11 @@ impl FileTunnelClient {
 
     /// Main run loop - spawns POLL_CONCURRENCY concurrent poll workers.
     pub async fn run(&self) {
+        if self.config.server.api_key.trim().is_empty() {
+            error!("File tunnel disabled: server.api_key is required");
+            return;
+        }
+
         info!(
             "File tunnel starting with {} concurrent pollers, max {} concurrent operations",
             POLL_CONCURRENCY, MAX_CONCURRENT_REQUESTS
@@ -95,12 +100,12 @@ impl FileTunnelClient {
             let client = self.client.clone();
             let base_url = self.base_url.clone();
             let node_id = self.config.server.node_id.clone();
-            let secret = self.config.server.secret.clone();
+            let api_key = self.config.server.api_key.clone();
             let file_manager = self.file_manager.clone();
             let request_semaphore = self.request_semaphore.clone();
 
             handles.push(tokio::spawn(async move {
-                poll_worker(i, client, base_url, node_id, secret, file_manager, request_semaphore).await;
+                poll_worker(i, client, base_url, node_id, api_key, file_manager, request_semaphore).await;
             }));
         }
 
@@ -118,7 +123,7 @@ async fn poll_worker(
     client: Client,
     base_url: String,
     node_id: String,
-    secret: String,
+    api_key: String,
     file_manager: Arc<FileManager>,
     request_semaphore: Arc<Semaphore>,
 ) {
@@ -129,7 +134,7 @@ async fn poll_worker(
         match client
             .get(&poll_url)
             .header("X-Node-Id", &node_id)
-            .header("X-Node-Secret", &secret)
+            .header("X-Node-Api-Key", &api_key)
             .timeout(Duration::from_secs(35))
             .send()
             .await
@@ -154,7 +159,7 @@ async fn poll_worker(
                             let client = client.clone();
                             let base_url = base_url.clone();
                             let node_id = node_id.clone();
-                            let secret = secret.clone();
+                            let api_key = api_key.clone();
                             let fm = file_manager.clone();
                             let semaphore = request_semaphore.clone();
 
@@ -162,7 +167,7 @@ async fn poll_worker(
                             tokio::spawn(async move {
                                 // Acquire permit before processing to limit concurrency
                                 let _permit = semaphore.acquire().await.unwrap();
-                                process_request(client, base_url, node_id, secret, fm, request)
+                                process_request(client, base_url, node_id, api_key, fm, request)
                                     .await;
                             });
                         }
@@ -189,7 +194,7 @@ async fn process_request(
     client: Client,
     base_url: String,
     node_id: String,
-    secret: String,
+    api_key: String,
     file_manager: Arc<FileManager>,
     request: TunnelRequest,
 ) {
@@ -204,7 +209,7 @@ async fn process_request(
         client: &client,
         base_url: &base_url,
         node_id: &node_id,
-        secret: &secret,
+        api_key: &api_key,
         request_id: &request.request_id,
     };
 
@@ -292,7 +297,7 @@ async fn handle_upload(
     match ctx.client
         .get(&upload_url)
         .header("X-Node-Id", ctx.node_id)
-        .header("X-Node-Secret", ctx.secret)
+        .header("X-Node-Api-Key", ctx.api_key)
         .send()
         .await
     {
@@ -583,7 +588,7 @@ struct TunnelCtx<'a> {
     client: &'a Client,
     base_url: &'a str,
     node_id: &'a str,
-    secret: &'a str,
+    api_key: &'a str,
     request_id: &'a str,
 }
 
@@ -608,7 +613,7 @@ async fn send_json_response(
     if let Err(e) = ctx.client
         .post(&url)
         .header("X-Node-Id", ctx.node_id)
-        .header("X-Node-Secret", ctx.secret)
+        .header("X-Node-Api-Key", ctx.api_key)
         .json(&response)
         .send()
         .await
@@ -631,7 +636,7 @@ async fn send_stream_response(
     let mut req = ctx.client
         .post(&url)
         .header("X-Node-Id", ctx.node_id)
-        .header("X-Node-Secret", ctx.secret)
+        .header("X-Node-Api-Key", ctx.api_key)
         .header("X-Tunnel-Success", if success { "true" } else { "false" })
         .header("Content-Type", "application/octet-stream");
 

@@ -290,7 +290,9 @@ impl FileManager {
             }
             fs::write(&full_path, content.as_bytes())
                 .await
-                .map_err(|e| AgentError::FileSystemError(format!("Failed to create file: {}", e)))?;
+                .map_err(|e| {
+                    AgentError::FileSystemError(format!("Failed to create file: {}", e))
+                })?;
         }
 
         info!("Entry created: {:?}", full_path);
@@ -305,7 +307,11 @@ impl FileManager {
         data: &[u8],
     ) -> AgentResult<()> {
         let full_path = self.resolve_path(server_id, path)?;
-        debug!("Writing bytes to file: {:?} ({} bytes)", full_path, data.len());
+        debug!(
+            "Writing bytes to file: {:?} ({} bytes)",
+            full_path,
+            data.len()
+        );
 
         if data.len() as u64 > MAX_FILE_SIZE {
             return Err(AgentError::FileSystemError(format!(
@@ -316,9 +322,9 @@ impl FileManager {
         }
 
         if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                AgentError::FileSystemError(format!("Failed to create dir: {}", e))
-            })?;
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AgentError::FileSystemError(format!("Failed to create dir: {}", e)))?;
         }
 
         fs::write(&full_path, data)
@@ -386,18 +392,29 @@ impl FileManager {
                 .map_err(|e| AgentError::FileSystemError(format!("zip failed: {}", e)))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(AgentError::FileSystemError(format!("zip error: {}", stderr)));
+                return Err(AgentError::FileSystemError(format!(
+                    "zip error: {}",
+                    stderr
+                )));
             }
         } else {
             let output = tokio::process::Command::new("tar")
-                .args(["-czf", &archive_full.to_string_lossy(), "-C", &canonical_base.to_string_lossy()])
+                .args([
+                    "-czf",
+                    &archive_full.to_string_lossy(),
+                    "-C",
+                    &canonical_base.to_string_lossy(),
+                ])
                 .args(&relative_paths)
                 .output()
                 .await
                 .map_err(|e| AgentError::FileSystemError(format!("tar failed: {}", e)))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(AgentError::FileSystemError(format!("tar error: {}", stderr)));
+                return Err(AgentError::FileSystemError(format!(
+                    "tar error: {}",
+                    stderr
+                )));
             }
         }
 
@@ -417,34 +434,53 @@ impl FileManager {
 
         debug!("Decompressing {:?} to {:?}", archive_full, target_full);
 
-        fs::create_dir_all(&target_full)
-            .await
-            .map_err(|e| AgentError::FileSystemError(format!("Failed to create target dir: {}", e)))?;
+        fs::create_dir_all(&target_full).await.map_err(|e| {
+            AgentError::FileSystemError(format!("Failed to create target dir: {}", e))
+        })?;
 
         let archive_lower = archive_path.to_lowercase();
         if archive_lower.ends_with(".zip") {
             let output = tokio::process::Command::new("unzip")
-                .args(["-o", &archive_full.to_string_lossy(), "-d", &target_full.to_string_lossy()])
+                .args([
+                    "-o",
+                    &archive_full.to_string_lossy(),
+                    "-d",
+                    &target_full.to_string_lossy(),
+                ])
                 .output()
                 .await
                 .map_err(|e| AgentError::FileSystemError(format!("unzip failed: {}", e)))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(AgentError::FileSystemError(format!("unzip error: {}", stderr)));
+                return Err(AgentError::FileSystemError(format!(
+                    "unzip error: {}",
+                    stderr
+                )));
             }
         } else {
             let output = tokio::process::Command::new("tar")
-                .args(["-xzf", &archive_full.to_string_lossy(), "-C", &target_full.to_string_lossy()])
+                .args([
+                    "-xzf",
+                    &archive_full.to_string_lossy(),
+                    "-C",
+                    &target_full.to_string_lossy(),
+                ])
                 .output()
                 .await
                 .map_err(|e| AgentError::FileSystemError(format!("tar extract failed: {}", e)))?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(AgentError::FileSystemError(format!("tar error: {}", stderr)));
+                return Err(AgentError::FileSystemError(format!(
+                    "tar error: {}",
+                    stderr
+                )));
             }
         }
 
-        info!("Archive decompressed: {:?} -> {:?}", archive_full, target_full);
+        info!(
+            "Archive decompressed: {:?} -> {:?}",
+            archive_full, target_full
+        );
         Ok(())
     }
 
@@ -468,14 +504,36 @@ impl FileManager {
                 .map_err(|e| AgentError::FileSystemError(format!("unzip -Z failed: {}", e)))?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                // zipinfo -l format: perms version os size type csize method date time name
-                let parts: Vec<&str> = line.splitn(10, char::is_whitespace).filter(|s| !s.is_empty()).collect();
-                if parts.len() < 9 { continue; }
-                let is_dir = parts[0].starts_with('d') || parts[8].ends_with('/');
-                let name = parts[8].trim_end_matches('/').to_string();
-                if name.is_empty() || name == "." || name.starts_with("..") { continue; }
+                // Skip header and summary lines
+                if line.is_empty()
+                    || line.starts_with("Archive:")
+                    || line.starts_with("Zip file size:")
+                    || line.contains("files,")
+                {
+                    continue;
+                }
+                // zipinfo -Z -l format: perms version os size type csize method date time name
+                // Example: -rw-r--r--  2.0 unx        5 b-        5 stor 26-Feb-11 20:33 test-arch/file.txt
+                let parts: Vec<&str> = line
+                    .split(char::is_whitespace)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                // Need at least: perms, version, os, size, type, csize, method, date, time, name = 10 fields
+                if parts.len() < 10 {
+                    continue;
+                }
+                let is_dir = parts[0].starts_with('d') || parts[9].ends_with('/');
+                let name = parts[9].trim_end_matches('/').to_string();
+                if name.is_empty() || name == "." || name.starts_with("..") {
+                    continue;
+                }
                 let size: u64 = parts[3].parse().unwrap_or(0);
-                entries.push(ArchiveEntry { name, size, is_dir, modified: None });
+                entries.push(ArchiveEntry {
+                    name,
+                    size,
+                    is_dir,
+                    modified: None,
+                });
             }
         } else if archive_lower.ends_with(".tar.gz") || archive_lower.ends_with(".tgz") {
             let output = tokio::process::Command::new("tar")
@@ -486,24 +544,42 @@ impl FileManager {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 // tar -tzvf format: drwxr-xr-x user/group  0 2024-01-01 00:00 path/to/dir/
-                let parts: Vec<&str> = line.splitn(6, char::is_whitespace).filter(|s| !s.is_empty()).collect();
-                if parts.len() < 6 { continue; }
+                let parts: Vec<&str> = line
+                    .splitn(6, char::is_whitespace)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if parts.len() < 6 {
+                    continue;
+                }
                 let is_dir = parts[0].starts_with('d') || parts[5].ends_with('/');
                 let name = parts[5].trim_end_matches('/').to_string();
-                if name.is_empty() || name == "." || name.starts_with("..") { continue; }
+                if name.is_empty() || name == "." || name.starts_with("..") {
+                    continue;
+                }
                 let size: u64 = parts[2].parse().unwrap_or(0);
                 let modified = if parts.len() >= 5 {
                     Some(format!("{}T{}:00Z", parts[3], parts[4]))
                 } else {
                     None
                 };
-                entries.push(ArchiveEntry { name, size, is_dir, modified });
+                entries.push(ArchiveEntry {
+                    name,
+                    size,
+                    is_dir,
+                    modified,
+                });
             }
         } else {
-            return Err(AgentError::InvalidRequest("Unsupported archive type".to_string()));
+            return Err(AgentError::InvalidRequest(
+                "Unsupported archive type".to_string(),
+            ));
         }
 
-        info!("Archive contents listed: {:?} ({} entries)", archive_full, entries.len());
+        info!(
+            "Archive contents listed: {:?} ({} entries)",
+            archive_full,
+            entries.len()
+        );
         Ok(entries)
     }
 }

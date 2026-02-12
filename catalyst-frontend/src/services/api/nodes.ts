@@ -77,8 +77,7 @@ export const nodesApi = {
     const { data } = await apiClient.post<
       ApiResponse<{
         deploymentToken: string;
-        secret: string;
-        apiKey: string | null;
+        apiKey: string;
         deployUrl: string;
         expiresAt: string;
       }>

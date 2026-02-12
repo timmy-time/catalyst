@@ -4,6 +4,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import type { FastifyRequest } from "fastify";
 import { auth } from "../auth";
+import { verifyAgentApiKey } from "../lib/agent-auth";
 import type {
   WsEvent} from "../shared-types";
 import {
@@ -114,54 +115,11 @@ export class WebSocketGateway {
     );
   }
 
-  private async verifyAgentApiKey(nodeId: string, tokenValue: string) {
-    try {
-      // Direct database lookup to bypass better-auth's rate limiting
-      // Agent API keys are stored with metadata.nodeId for validation
-      const apiKeyRecord = await this.prisma.apikey.findUnique({
-        where: { key: tokenValue },
-      });
-
-      if (!apiKeyRecord) {
-        return false;
-      }
-
-      // Check if the key is enabled
-      if (!apiKeyRecord.enabled) {
-        this.logger.warn({ nodeId }, "Agent API key is disabled");
-        return false;
-      }
-
-      // Check if the key is expired
-      if (apiKeyRecord.expiresAt && new Date(apiKeyRecord.expiresAt) < new Date()) {
-        this.logger.warn({ nodeId }, "Agent API key has expired");
-        return false;
-      }
-
-      // Verify the metadata contains the matching nodeId
-      const metadata = apiKeyRecord.metadata as Record<string, unknown> | null;
-      if (!metadata || typeof metadata !== "object") {
-        return false;
-      }
-      const metaNodeId = metadata.nodeId;
-      return typeof metaNodeId === "string" && metaNodeId === nodeId;
-    } catch (err) {
-      this.logger.warn({ err, nodeId }, "Agent API key verification failed");
-      return false;
-    }
-  }
-
   private async authenticateAgentToken(nodeId: string, tokenValue: string) {
     if (!tokenValue) return null;
     const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
     if (!node) return null;
-    const secretMatches =
-      tokenValue.length === node.secret.length &&
-      crypto.timingSafeEqual(Buffer.from(node.secret), Buffer.from(tokenValue));
-    if (secretMatches) {
-      return { node, authType: "secret" as const };
-    }
-    if (await this.verifyAgentApiKey(nodeId, tokenValue)) {
+    if (await verifyAgentApiKey(this.prisma, nodeId, tokenValue)) {
       return { node, authType: "api_key" as const };
     }
     return null;
@@ -200,8 +158,13 @@ export class WebSocketGateway {
         authenticated: false,
         lastHeartbeat: Date.now(),
       };
-      const onMessage = (data: any) => this.handleAgentMessage(nodeId, data);
+      const onMessage = (data: any) => this.handleAgentMessage(nodeId, socket, data);
       const onClose = () => {
+        const current = this.agents.get(nodeId);
+        if (!current || current.socket !== socket) {
+          this.logger.debug({ nodeId }, "Ignoring close from stale agent socket");
+          return;
+        }
         this.agents.delete(nodeId);
         this.prisma.node.update({
           where: { id: nodeId },
@@ -213,6 +176,15 @@ export class WebSocketGateway {
       if (token) {
         const authResult = await this.authenticateAgentToken(nodeId, token);
         if (authResult) {
+          const existing = this.agents.get(nodeId);
+          if (existing && existing.socket !== socket) {
+            this.logger.warn({ nodeId }, "Replacing existing agent connection");
+            try {
+              existing.socket.close();
+            } catch {
+              // ignore close errors
+            }
+          }
           this.agents.set(nodeId, agent);
           socket.on("message", onMessage);
           socket.on("close", onClose);
@@ -229,6 +201,15 @@ export class WebSocketGateway {
       } else {
         // No token in URL - agent will send handshake with token
         // Add to agents map so handleAgentMessage can find it
+        const existing = this.agents.get(nodeId);
+        if (existing && existing.socket !== socket) {
+          this.logger.warn({ nodeId }, "Replacing existing agent connection");
+          try {
+            existing.socket.close();
+          } catch {
+            // ignore close errors
+          }
+        }
         this.agents.set(nodeId, agent);
         socket.on("message", onMessage);
         socket.on("close", onClose);
@@ -237,7 +218,7 @@ export class WebSocketGateway {
         // Disconnect agent if handshake not completed within 10 seconds
         setTimeout(() => {
           const pending = this.agents.get(nodeId);
-          if (pending && !pending.authenticated) {
+          if (pending && pending.socket === socket && !pending.authenticated) {
             pending.socket.close();
             this.agents.delete(nodeId);
             this.logger.warn({ nodeId }, "Agent handshake timeout");
@@ -483,7 +464,7 @@ export class WebSocketGateway {
     }
   }
 
-  private async handleAgentMessage(nodeId: string, data: any) {
+  private async handleAgentMessage(nodeId: string, socket: any, data: any) {
     try {
       if (!this.allowAgentMessage(nodeId, this.agentMessageLimit)) {
         if (this.shouldWarnRateLimit(nodeId, this.agentMessageLimit.windowMs)) {
@@ -503,6 +484,10 @@ export class WebSocketGateway {
       }
       const agent = this.agents.get(nodeId);
       if (!agent) return;
+      if (agent.socket !== socket) {
+        this.logger.debug({ nodeId }, "Ignoring message from stale agent socket");
+        return;
+      }
       if (!agent.authenticated && message.type !== "node_handshake") {
         this.logger.warn({ nodeId }, "Rejected agent message before handshake");
         return;
@@ -933,6 +918,10 @@ export class WebSocketGateway {
         }
         if (server.nodeId !== nodeId) {
           this.logger.warn({ nodeId, serverId: server.id }, "server_state_update from wrong node");
+          return;
+        }
+        if (server.status === message.state) {
+          // Idempotent update from agent; no state change required.
           return;
         }
         const transition = ServerStateMachine.validateTransition(

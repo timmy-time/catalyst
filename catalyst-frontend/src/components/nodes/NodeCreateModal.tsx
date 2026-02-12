@@ -19,8 +19,7 @@ function NodeCreateModal({ locationId }: Props) {
   const [deployInfo, setDeployInfo] = useState<{
     deployUrl: string;
     deploymentToken: string;
-    secret: string;
-    apiKey: string | null;
+    apiKey: string;
     expiresAt: string;
   } | null>(null);
   const queryClient = useQueryClient();
@@ -208,7 +207,7 @@ function NodeCreateModal({ locationId }: Props) {
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-900 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-100">
                 <code className="whitespace-pre-wrap">
-                  {`curl -s '${deployInfo.deployUrl}?apiKey=${encodeURIComponent(deployInfo.apiKey ?? '')}' | sudo bash -x`}
+                  {`curl -s '${deployInfo.deployUrl}?apiKey=${encodeURIComponent(deployInfo.apiKey)}' | sudo bash -x`}
                 </code>
               </div>
               <div className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500">

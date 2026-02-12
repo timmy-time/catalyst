@@ -148,10 +148,20 @@ async fn main() -> AgentResult<()> {
 
     let config_path = config_path.as_deref().unwrap_or("./config.toml");
     // Load config first so logging level/format can be applied.
-    let config = AgentConfig::from_file(config_path)
-        .or_else(|_| AgentConfig::from_file("/opt/catalyst-agent/config.toml"))
-        .or_else(|_| AgentConfig::from_env())
-        .map_err(|e| AgentError::ConfigError(e.to_string()))?;
+    // Do not silently fall back to env if an explicit config file exists but is invalid.
+    let config = {
+        let explicit = std::path::Path::new(config_path);
+        let system = std::path::Path::new("/opt/catalyst-agent/config.toml");
+
+        if explicit.exists() {
+            AgentConfig::from_file(config_path).map_err(AgentError::ConfigError)?
+        } else if system.exists() {
+            AgentConfig::from_file("/opt/catalyst-agent/config.toml")
+                .map_err(AgentError::ConfigError)?
+        } else {
+            AgentConfig::from_env().map_err(AgentError::ConfigError)?
+        }
+    };
 
     let filter = format!("catalyst_agent={},tokio=info", config.logging.level);
     if config.logging.format == "json" {

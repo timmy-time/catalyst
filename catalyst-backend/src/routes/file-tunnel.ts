@@ -1,13 +1,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
-import crypto from "crypto";
 import type { FileTunnelService, FileTunnelResponse } from "../services/file-tunnel";
 import { getSecuritySettings } from "../services/mailer";
+import { verifyAgentApiKey } from "../lib/agent-auth";
 
 /**
  * Internal routes used by agents to poll for and respond to file operations.
- * Auth: X-Node-Id + X-Node-Secret headers validated against DB.
+ * Auth: X-Node-Id + X-Node-Api-Key headers validated against DB.
  * All routes have configurable rate limiting.
  */
 export function fileTunnelRoutes(
@@ -18,15 +18,15 @@ export function fileTunnelRoutes(
 ) {
   const log = logger.child({ module: "file-tunnel-routes" });
 
-  /** Authenticate agent via headers with constant-time comparison. Returns nodeId or sends 401. */
+  /** Authenticate agent via headers. Returns nodeId or sends 401. */
   async function authenticateAgent(
     request: FastifyRequest,
     reply: FastifyReply
   ): Promise<string | null> {
     const nodeId = request.headers["x-node-id"] as string;
-    const secret = request.headers["x-node-secret"] as string;
+    const apiKey = request.headers["x-node-api-key"] as string;
 
-    if (!nodeId || !secret) {
+    if (!nodeId || !apiKey) {
       reply.status(401).send({ error: "Missing authentication headers" });
       return null;
     }
@@ -37,10 +37,8 @@ export function fileTunnelRoutes(
       return null;
     }
 
-    // Constant-time comparison that also handles length safely
-    const secretMatches = constantTimeEqual(secret, node.secret);
-
-    if (!secretMatches) {
+    const apiKeyMatches = await verifyAgentApiKey(prisma, nodeId, apiKey);
+    if (!apiKeyMatches) {
       reply.status(401).send({ error: "Invalid credentials" });
       return null;
     }
@@ -49,31 +47,16 @@ export function fileTunnelRoutes(
   }
 
   /**
-   * Constant-time string comparison to prevent timing attacks.
-   * Handles length mismatches in constant time as well.
-   */
-  function constantTimeEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) {
-      // Still do full comparison but with a dummy to maintain constant time
-      const dummy = Buffer.alloc(a.length, 0);
-      const aBuf = Buffer.from(a);
-      return crypto.timingSafeEqual(aBuf, dummy) && false;
-    }
-    return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-  }
-
-  /**
    * Rate limiter key generator for file tunnel routes.
    * Uses nodeId for authenticated requests to allow legitimate traffic.
    */
   async function fileTunnelKeyGenerator(request: FastifyRequest): Promise<string> {
     const nodeId = request.headers["x-node-id"] as string;
-    const secret = request.headers["x-node-secret"] as string;
+    const apiKey = request.headers["x-node-api-key"] as string;
 
-    if (nodeId && secret) {
+    if (nodeId && apiKey) {
       // Verify credentials first to use authenticated key
-      const node = await prisma.node.findUnique({ where: { id: nodeId } });
-      if (node && constantTimeEqual(secret, node.secret)) {
+      if (await verifyAgentApiKey(prisma, nodeId, apiKey)) {
         return `node:${nodeId}`;
       }
     }

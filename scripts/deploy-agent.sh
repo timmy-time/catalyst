@@ -7,9 +7,8 @@ set -euo pipefail
 
 BACKEND_INPUT_URL="${1:-http://localhost:3000}"
 NODE_ID="${2:-node-$(hostname -s 2>/dev/null || hostname)}"
-NODE_SECRET="${3:-}"
-NODE_API_KEY="${4:-}"
-NODE_HOSTNAME="${5:-$(hostname -f 2>/dev/null || hostname)}"
+NODE_API_KEY="${3:-}"
+NODE_HOSTNAME="${4:-$(hostname -f 2>/dev/null || hostname)}"
 
 NERDCTL_VERSION="2.2.1"
 CNI_PLUGINS_VERSION="v1.4.1"
@@ -21,9 +20,9 @@ if [ "$EUID" -ne 0 ]; then
     fail "This script must be run as root."
 fi
 
-if [ -z "$NODE_SECRET" ]; then
+if [ -z "$NODE_API_KEY" ]; then
     cat <<'USAGE' >&2
-Usage: deploy-agent.sh <backend_url> <node_id> <node_secret> [node_api_key] [node_hostname]
+Usage: deploy-agent.sh <backend_url> <node_id> <node_api_key> [node_hostname]
 USAGE
     exit 1
 fi
@@ -223,10 +222,9 @@ install_agent_binary() {
 }
 
 write_config() {
-    local escaped_backend escaped_node escaped_secret escaped_api_key escaped_hostname
+    local escaped_backend escaped_node escaped_api_key escaped_hostname
     escaped_backend="$(toml_escape "$BACKEND_WS_URL")"
     escaped_node="$(toml_escape "$NODE_ID")"
-    escaped_secret="$(toml_escape "$NODE_SECRET")"
     escaped_api_key="$(toml_escape "$NODE_API_KEY")"
     escaped_hostname="$(toml_escape "$NODE_HOSTNAME")"
 
@@ -234,7 +232,6 @@ write_config() {
 [server]
 backend_url = "${escaped_backend}"
 node_id = "${escaped_node}"
-secret = "${escaped_secret}"
 api_key = "${escaped_api_key}"
 hostname = "${escaped_hostname}"
 data_dir = "/var/lib/catalyst"

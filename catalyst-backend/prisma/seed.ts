@@ -39,10 +39,7 @@ backend_url = "${wsUrl}/ws"
 # Unique node identifier (UUID from database)
 node_id = "${node.id}"
 
-# Node secret key (from database)
-secret = "${node.secret}"
-
-# Agent API key (required for better-auth)
+# Agent API key (required for node authentication)
 api_key = "${apiKey}"
 
 # Hostname of this server
@@ -535,7 +532,6 @@ echo '[Catalyst] Node.js bot installation complete.'
   console.log("Production node ready at: node1.example.com");
   console.log("Agent config.toml generated with all required variables:");
   console.log("  - node_id:", node.id);
-  console.log("  - secret:", node.secret);
   console.log("  - api_key:", apiKey || "(not created)");
   console.log("  - hostname:", node.hostname);
   console.log("  - backend_url:", toWebSocketUrl(backendUrl) + "/ws");

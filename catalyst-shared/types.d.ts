@@ -102,7 +102,6 @@ export interface Node {
     description?: string;
     hostname: string;
     publicAddress: string;
-    secret: string;
     maxMemoryMb: number;
     maxCpuCores: number;
     isOnline: boolean;
@@ -163,7 +162,7 @@ export declare namespace WsEvent {
         type: "node_handshake";
         token: string;
         nodeId: string;
-        tokenType?: "secret" | "api_key";
+        tokenType?: "api_key";
     }
     interface NodeHandshakeResponse {
         type: "node_handshake_response";
@@ -194,7 +193,6 @@ export interface JwtPayload {
 }
 export interface DeploymentTokenPayload {
     nodeId: string;
-    secret: string;
     exp: number;
 }
 export declare class CatalystError extends Error {

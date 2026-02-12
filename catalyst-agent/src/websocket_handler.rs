@@ -81,6 +81,16 @@ impl Clone for WebSocketHandler {
 }
 
 impl WebSocketHandler {
+    fn select_agent_auth_token(&self) -> AgentResult<(&str, &'static str)> {
+        let api_key = self.config.server.api_key.trim();
+        if api_key.is_empty() {
+            return Err(AgentError::ConfigError(
+                "server.api_key is required for node authentication".to_string(),
+            ));
+        }
+        Ok((api_key, "api_key"))
+    }
+
     pub fn new(
         config: Arc<AgentConfig>,
         runtime: Arc<ContainerdRuntime>,
@@ -153,18 +163,7 @@ impl WebSocketHandler {
 
     async fn establish_connection(&self) -> AgentResult<()> {
         // Include token in URL for rate limit bypass before WebSocket upgrade
-        let auth_token = if let Some(api_key) =
-            self.config.server.api_key.as_ref().and_then(|value| {
-                if value.trim().is_empty() {
-                    None
-                } else {
-                    Some(value)
-                }
-            }) {
-            api_key.as_str()
-        } else {
-            self.config.server.secret.as_str()
-        };
+        let (auth_token, token_type) = self.select_agent_auth_token()?;
 
         let ws_url = format!(
             "{}?nodeId={}&token={}",
@@ -177,6 +176,7 @@ impl WebSocketHandler {
             "Connecting to backend: {}?nodeId={}",
             self.config.server.backend_url, self.config.server.node_id
         );
+        info!("Using {} auth token for agent connection", token_type);
 
         let (ws_stream, _) = connect_async(&ws_url)
             .await
@@ -192,18 +192,7 @@ impl WebSocketHandler {
         }
 
         // Send handshake
-        let (auth_token, token_type) = if let Some(api_key) =
-            self.config.server.api_key.as_ref().and_then(|value| {
-                if value.trim().is_empty() {
-                    None
-                } else {
-                    Some(value)
-                }
-            }) {
-            (api_key.as_str(), "api_key")
-        } else {
-            (self.config.server.secret.as_str(), "secret")
-        };
+        let (auth_token, token_type) = self.select_agent_auth_token()?;
         let handshake = json!({
             "type": "node_handshake",
             "token": auth_token,

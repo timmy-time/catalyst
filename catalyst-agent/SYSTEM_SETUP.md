@@ -181,7 +181,6 @@ curl -fsSL https://github.com/containernetworking/plugins/releases/download/v1.4
    ```bash
    export BACKEND_WS_URL=wss://your-backend.com/ws
    export NODE_ID=<your-node-id>
-   export NODE_SECRET=<your-node-secret>
    export NODE_API_KEY=<your-agent-api-key>
    ```
 4. **Run agent** - It auto-configures everything

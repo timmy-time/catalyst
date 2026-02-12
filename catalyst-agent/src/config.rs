@@ -14,8 +14,7 @@ pub struct AgentConfig {
 pub struct ServerConfig {
     pub backend_url: String,
     pub node_id: String,
-    pub secret: String,
-    pub api_key: Option<String>,
+    pub api_key: String,
     pub hostname: String,
     pub data_dir: PathBuf,
     pub max_connections: usize,
@@ -26,8 +25,7 @@ impl std::fmt::Debug for ServerConfig {
         f.debug_struct("ServerConfig")
             .field("backend_url", &self.backend_url)
             .field("node_id", &self.node_id)
-            .field("secret", &"[REDACTED]")
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_key", &"[REDACTED]")
             .field("hostname", &self.hostname)
             .field("data_dir", &self.data_dir)
             .field("max_connections", &self.max_connections)
@@ -67,18 +65,22 @@ impl AgentConfig {
     pub fn from_file(path: &str) -> Result<Self, String> {
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read config: {}", e))?;
-        toml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+        let config: Self =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+        if config.server.api_key.trim().is_empty() {
+            return Err("server.api_key must be set".to_string());
+        }
+        Ok(config)
     }
 
     pub fn from_env() -> Result<Self, String> {
-        Ok(Self {
+        let config = Self {
             server: ServerConfig {
                 backend_url: std::env::var("BACKEND_URL")
                     .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string()),
                 node_id: std::env::var("NODE_ID").map_err(|_| "NODE_ID not set".to_string())?,
-                secret: std::env::var("NODE_SECRET")
-                    .map_err(|_| "NODE_SECRET not set".to_string())?,
-                api_key: std::env::var("NODE_API_KEY").ok(),
+                api_key: std::env::var("NODE_API_KEY")
+                    .map_err(|_| "NODE_API_KEY not set".to_string())?,
                 hostname: hostname().map_err(|e| format!("Failed to get hostname: {}", e))?,
                 data_dir: PathBuf::from(
                     std::env::var("DATA_DIR").unwrap_or_else(|_| "/var/lib/catalyst".to_string()),
@@ -98,7 +100,11 @@ impl AgentConfig {
                 level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
                 format: "json".to_string(),
             },
-        })
+        };
+        if config.server.api_key.trim().is_empty() {
+            return Err("NODE_API_KEY must not be empty".to_string());
+        }
+        Ok(config)
     }
 }
 

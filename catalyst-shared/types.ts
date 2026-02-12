@@ -206,7 +206,6 @@ export interface Node {
   description?: string;
   hostname: string;
   publicAddress: string;
-  secret: string;
   maxMemoryMb: number;
   maxCpuCores: number;
   isOnline: boolean;
@@ -283,7 +282,7 @@ export namespace WsEvent {
     type: "node_handshake";
     token: string;
     nodeId: string;
-    tokenType?: "secret" | "api_key";
+    tokenType?: "api_key";
   }
 
   export interface NodeHandshakeResponse {
@@ -327,7 +326,6 @@ export interface JwtPayload {
 
 export interface DeploymentTokenPayload {
   nodeId: string;
-  secret: string;
   exp: number;
 }
 
