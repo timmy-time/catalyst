@@ -518,6 +518,9 @@ export class WebSocketGateway {
         await this.finalizeAgentConnection(authResult.node, agent);
         return;
       }
+      // Treat any authenticated agent message as liveness to avoid false disconnects
+      // when heartbeat packets are delayed but other traffic is active.
+      agent.lastHeartbeat = Date.now();
 
       if (message.type === "backup_download_response") {
         const pending = message.requestId
@@ -1851,7 +1854,10 @@ export class WebSocketGateway {
   async sendToAgent(nodeId: string, message: any): Promise<boolean> {
     const agent = this.agents.get(nodeId);
     if (!agent || !agent.authenticated || agent.socket.readyState !== 1) {
-      this.logger.warn(`Cannot send to agent ${nodeId}: not connected`);
+      this.logger.warn(
+        { nodeId, type: typeof message?.type === "string" ? message.type : undefined },
+        "Cannot send to agent: not connected",
+      );
       return false;
     }
 
